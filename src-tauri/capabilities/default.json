@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Local settings and focused grid only",
-  "windows": ["main", "grid", "calibration"],
+  "windows": ["main", "grid", "calibration", "mini"],
   "permissions": ["core:default"]
 }

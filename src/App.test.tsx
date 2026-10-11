@@ -11,6 +11,7 @@ import {
 } from "./types";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(async () => () => {}) }));
 const defaults: Config = {
   profiles: [],
   bookmarks: [],
@@ -71,7 +72,7 @@ beforeEach(() => {
 });
 async function boot() {
   render(<App />);
-  await screen.findByRole("heading", { name: /Your keyboard/ });
+  await screen.findByRole("heading", { name: "Engine status" });
 }
 describe("settings integration", () => {
   it("renders saved configuration and updates movement through Rust IPC", async () => {
@@ -102,7 +103,7 @@ describe("settings integration", () => {
   });
   it("shows binding conflicts and restores bindings", async () => {
     await boot();
-    fireEvent.click(screen.getByRole("button", { name: "Keybindings" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keymapping" }));
     fireEvent.change(screen.getByLabelText("Cursor up"), {
       target: { value: "125" },
     });
@@ -147,6 +148,25 @@ describe("settings integration", () => {
       "Native worker unavailable",
     );
     expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
+  });
+  it("the keyboard template edits the same binding draft as the matrix", async () => {
+    await boot();
+    fireEvent.click(screen.getByRole("button", { name: "Keymapping" }));
+    fireEvent.click(screen.getByRole("button", { name: "Template position 2: Cursor down" }));
+    fireEvent.change(screen.getByLabelText("Selected binding"), {target:{value:"127"}});
+    expect(screen.getByLabelText("Cursor down")).toHaveValue("127");
+    expect(screen.getByRole("alert")).toHaveTextContent("distinct binding");
+    expect(screen.getByRole("button", {name:"Save changes"})).toBeDisabled();
+  });
+  it("refreshes unedited settings changed by the mini panel while preserving an edited draft", async () => {
+    await boot();
+    fireEvent.click(screen.getByRole("button", {name:"Movement"}));
+    saved.normal.max_speed=1600;
+    await waitFor(()=>expect(screen.getByLabelText("Maximum speed")).toHaveValue(1600),{timeout:2500});
+    fireEvent.change(screen.getByLabelText("Maximum speed"),{target:{value:"1700"}});
+    saved.normal.max_speed=1800;
+    await waitFor(()=>expect(invoke.mock.calls.filter(([command])=>command==="get_snapshot").length).toBeGreaterThanOrEqual(3),{timeout:2500});
+    expect(screen.getByLabelText("Maximum speed")).toHaveValue(1700);
   });
 });
 describe("curve and validation", () => {

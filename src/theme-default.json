@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "id": "phosphor-green",
+  "name": "Phosphor Green",
+  "colors": {
+    "bg-app": "#020403",
+    "bg-sidebar": "#050806",
+    "bg-panel": "#0A100C",
+    "bg-panel-raised": "#111A13",
+    "text-primary": "#DDF4E1",
+    "text-secondary": "#A5BEA9",
+    "text-muted": "#819B85",
+    "accent-primary": "#8DF5A1",
+    "accent-secondary": "#EFC17B",
+    "accent-tertiary": "#78DEEE",
+    "border-subtle": "#203426",
+    "border-strong": "#36553C",
+    "border-active": "#8DF5A1",
+    "status-success": "#8DF5A1",
+    "status-warning": "#EFC17B",
+    "status-danger": "#FFA6A6",
+    "control-bg": "#111A13",
+    "control-text": "#DDF4E1",
+    "control-hover": "#203426",
+    "control-on": "#8DF5A1",
+    "control-focus": "#78DEEE"
+  },
+  "radius": 4,
+  "density": "comfortable",
+  "fontSize": 14,
+  "effects": {
+    "glow": "subtle",
+    "distortion": true,
+    "intensity": 20,
+    "ghost": 20,
+    "displacement": 0.6,
+    "misalignment": 8,
+    "bloom": 25,
+    "scanlines": false,
+    "noise": false,
+    "flicker": false
+  }
+}
