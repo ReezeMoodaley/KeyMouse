@@ -1,8 +1,10 @@
 # KeyMouse
 
-KeyMouse is a Windows desktop utility that turns dedicated keyboard controls into precise cursor movement, clicks, dragging, scrolling and hierarchical grid navigation. It is designed for the Silakka54's QMK/Vial mouse layer. Firmware changes are unnecessary.
+KeyMouse is a Windows desktop utility that turns dedicated keyboard controls into precise cursor movement, clicks, dragging, scrolling and hierarchical grid navigation. It works with any keyboard that can send the configured function-key mappings, regardless of keyboard model or configuration software.
 
 The backend owns input and configuration. React is a settings interface; it never drives cursor movement. No telemetry, accounts, cloud storage, typed-text recording or global keyboard suppression is used.
+
+The Retro Terminal interface includes **Theme Studio** with four presets, custom themes, phosphor glow and adjustable CRT lettering. Themes synchronize with the tray-accessible **Mini Control Panel** and overlays. See [the interface and theme guide](docs/RETRO_TERMINAL.md) for customization, architecture and validation details.
 
 Open **Precision guide** in the settings sidebar for feature explanations, starting values, suggested combinations and a calibration routine. The same guide is available as [PRECISION_GUIDE.md](docs/PRECISION_GUIDE.md). Both versions share `src/guide.json`; regenerate the document after edits with `node scripts/export-guide.mjs`.
 
@@ -14,10 +16,9 @@ Windows 10 1809 or newer / Windows 11, x64, Microsoft Edge WebView2 and a keyboa
 
 Build the installer with the commands below, then run `src-tauri\target\release\bundle\nsis\KeyMouse_0.1.0_x64-setup.exe`. The installer is per-user and bootstraps WebView2 if it is missing (internet required). No administrator privileges are requested by KeyMouse. Windows may warn because the installer is unsigned.
 
-For development, open a Developer PowerShell for VS 2022:
+For development, open a Developer PowerShell for VS 2022 in the cloned repository:
 
 ```powershell
-cd C:\Users\reeze\Documents\Development\KeyMouse\KeyMouse
 npm ci
 rustup default stable-x86_64-pc-windows-msvc
 rustup component add rustfmt clippy
@@ -25,13 +26,6 @@ npm run desktop
 ```
 
 `npm run dev` alone previews the interface in a browser; it cannot access native input. The UI explicitly reports this rather than simulating an engine.
-
-In this implementation workspace, Rust was installed locally in the parent `.toolchain` directory. Activate it before the standard commands:
-
-```powershell
-. .\scripts\use-local-toolchain.ps1
-npm.cmd run desktop
-```
 
 ## How movement works
 
@@ -41,34 +35,34 @@ For elapsed hold time `t`, ramp duration `r`, and exponent `e`, speed is `min + 
 
 Cursor movement adds deltas to the current `GetCursorPos` and sends exact physical positions through absolute virtual-desktop `SendInput`. Button and wheel events carry the current cursor position in the same input stream. Grid, bookmark and history jumps use `SetCursorPos`. A worker stall over 100 ms cancels held controls and releases owned buttons. Release and press the control again to resume. No Windows pointer-speed or acceleration settings are changed.
 
-| Mode | Min / max px/s | Ramp | Exponent | Behaviour |
-| --- | --- | --- | --- | --- |
-| Normal | 40 / 1400 | 900 ms | 1.6 | Gentle start, predictable acceleration |
-| Precision | 8 / 80 | 700 ms | 1.8 | One pixel per new direction press; 160 ms hold delay |
-| Turbo | 900 / 4000 | 350 ms | 1.2 | Rapid display traversal |
+| Mode      | Min / max px/s | Ramp   | Exponent | Behaviour                                            |
+| --------- | -------------- | ------ | -------- | ---------------------------------------------------- |
+| Normal    | 40 / 1400      | 900 ms | 1.6      | Gentle start, predictable acceleration               |
+| Precision | 8 / 80         | 700 ms | 1.8      | One pixel per new direction press; 160 ms hold delay |
+| Turbo     | 900 / 4000     | 350 ms | 1.2      | Rapid display traversal                              |
 
 Precision overrides turbo; both modifiers are momentary. A precision diagonal tap steps one pixel on each axis when both keys are pressed, resulting in `(±1, ±1)`. Continuous diagonals are normalized. Entering precision while a direction is already held does not add a tap. Step size is configurable from 1–10 pixels; exact one-pixel behaviour refers to the default.
 
 ## Default controls
 
-| Key | Action |
-| --- | --- |
-| F13 | Up |
-| F14 | Down |
-| F15 | Left |
-| F16 | Right |
-| F17 | Left button (hold to drag) |
-| F18 | Right button |
-| F19 | Middle button |
-| F20 | Scroll positive (up / right) |
+| Key | Action                        |
+| --- | ----------------------------- |
+| F13 | Up                            |
+| F14 | Down                          |
+| F15 | Left                          |
+| F16 | Right                         |
+| F17 | Left button (hold to drag)    |
+| F18 | Right button                  |
+| F19 | Middle button                 |
+| F20 | Scroll positive (up / right)  |
 | F21 | Scroll negative (down / left) |
-| F22 | Precision |
-| F23 | Turbo |
-| F24 | Horizontal-scroll modifier |
+| F22 | Precision                     |
+| F23 | Turbo                         |
+| F24 | Horizontal-scroll modifier    |
 
 Reassign any action among F13–F24 in settings. Every action must have a unique key. Rust deliberately rejects ordinary typing keys, unsupported values and conflicts. F13–F24 are not suppressed and may reach other applications.
 
-See [Silakka54 setup](docs/SILAKKA54_SETUP.md) for the Vial procedure and rollback steps.
+Use your keyboard's configuration software to assign the function keys above to your preferred keys or layer, then match those assignments in KeyMouse settings.
 
 ## Grid navigation
 
@@ -95,14 +89,14 @@ Changes are validated, applied to the worker and persisted through Tauri command
 ## Troubleshooting and Windows limitations
 
 - Exit code `0xc0000139` (`STATUS_ENTRYPOINT_NOT_FOUND`): rebuild or reinstall the corrected package. The Windows manifest must include `Microsoft.Windows.Common-Controls` version `6.0.0.0` for the UI's `TaskDialogIndirect` import. Both development and release builds embed this dependency.
-- No movement: verify settings show a running enabled engine, assign the exact F13–F24 Vial keycodes, and inspect the last recognized action in Diagnostics. Ordinary F1–F12 are different keys.
+- No movement: verify settings show a running enabled engine, assign the exact F13–F24 keycodes in your keyboard configuration, and inspect the last recognized action in Diagnostics. Ordinary F1–F12 are different keys.
 - Stopped worker: read its diagnostic error, quit and relaunch. API failures are surfaced; the worker does not pretend to operate.
 - Buttons or scrolling rejected: Windows UIPI prevents an unelevated app injecting into elevated applications. KeyMouse intentionally runs asInvoker. Secure desktop, UAC prompts, lock screens and some games are unsupported.
 - Shortcut conflict: release the shortcut in other software or edit the saved grid key (Ctrl+Alt with A–Z/F1–F12). The emergency shortcut is fixed.
 - After a stall, resume by releasing and pressing controls. After suspend/lock, no held controls are replayed.
 - Fine wheel deltas may be ignored or aggregated by applications. Set amount to 120 for a standard notch.
 - Physical and generated button presses share Windows state. Avoid simultaneous physical/button-key dragging; KeyMouse can track its own events but cannot separate Windows' combined button state.
-- Input-device count lists connected keyboard-class Raw Input devices, not specifically a Silakka54.
+- Input-device count lists connected keyboard-class Raw Input devices.
 - Start-at-login registers the executable's current path. Enable it from the installed application; a moved development binary leaves a stale startup path.
 - The grid has no click-through/non-activating selection mode. Focus is intentional and may affect the previous application's active window state.
 
