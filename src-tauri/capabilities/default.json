@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Local settings and focused grid only",
+  "windows": ["main", "grid"],
+  "permissions": ["core:default"]
+}
