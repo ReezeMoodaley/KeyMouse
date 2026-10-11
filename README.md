@@ -4,6 +4,8 @@ KeyMouse is a Windows desktop utility that turns dedicated keyboard controls int
 
 The backend owns input and configuration. React is a settings interface; it never drives cursor movement. No telemetry, accounts, cloud storage, typed-text recording or global keyboard suppression is used.
 
+Open **Precision guide** in the settings sidebar for feature explanations, starting values, suggested combinations and a calibration routine. The same guide is available as [PRECISION_GUIDE.md](docs/PRECISION_GUIDE.md). Both versions share `src/guide.json`; regenerate the document after edits with `node scripts/export-guide.mjs`.
+
 ## Requirements
 
 Windows 10 1809 or newer / Windows 11, x64, Microsoft Edge WebView2 and a keyboard capable of sending F13–F24. A physical mouse is recommended during initial setup. Development needs Node 22.20+ (or a version supported by the locked Vite release), stable Rust **MSVC**, and Visual Studio 2022 C++ Build Tools with a Windows SDK.
@@ -37,7 +39,7 @@ The `keymouse-input-engine` Rust thread receives keyboard make/break events thro
 
 For elapsed hold time `t`, ramp duration `r`, and exponent `e`, speed is `min + (max - min) * clamp(t/r, 0, 1)^e`. The normalized direction, speed and actual elapsed tick time produce pixel deltas. Fractional remainders preserve slow movement. Reversal and stopping clear affected remainders. Opposite inputs cancel on their axis.
 
-Cursor movement uses the current `GetCursorPos` followed by `SetCursorPos`; physical mouse movement is preserved between updates. Clicks and wheel events use `SendInput`. A worker stall over 100 ms cancels held controls and releases owned buttons. Release and press the control again to resume. No Windows pointer-speed or acceleration settings are changed.
+Cursor movement adds deltas to the current `GetCursorPos` and sends exact physical positions through absolute virtual-desktop `SendInput`. Button and wheel events carry the current cursor position in the same input stream. Grid, bookmark and history jumps use `SetCursorPos`. A worker stall over 100 ms cancels held controls and releases owned buttons. Release and press the control again to resume. No Windows pointer-speed or acceleration settings are changed.
 
 | Mode | Min / max px/s | Ramp | Exponent | Behaviour |
 | --- | --- | --- | --- | --- |
@@ -105,6 +107,8 @@ Changes are validated, applied to the worker and persisted through Tauri command
 - The grid has no click-through/non-activating selection mode. Focus is intentional and may affect the previous application's active window state.
 
 ## Build and test
+
+Optional movement refinements, native Precision magnifier, cursor history, bookmarks, application profiles and explicit calibration sessions are available in their settings pages. All nine toggles default off. Save a toggle to apply it; parameters remain saved when disabled. See [movement responsibilities and metrics](docs/MOVEMENT_REFINEMENTS.md), [implementation matrix](docs/IMPLEMENTATION_MATRIX.md) and [baseline comparison exercises](docs/MOVEMENT_ACCEPTANCE.md).
 
 ```powershell
 npm run typecheck

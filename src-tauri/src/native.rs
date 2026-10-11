@@ -27,11 +27,13 @@ use windows::{
             Threading::{CreateWaitableTimerExW, SetWaitableTimer, INFINITE, TIMER_ALL_ACCESS},
         },
         UI::{
+            HiDpi::{SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2},
             Input::KeyboardAndMouse::{
                 GetAsyncKeyState, RegisterHotKey, SendInput, UnregisterHotKey, INPUT, INPUT_0,
-                INPUT_MOUSE, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOUSEEVENTF_HWHEEL,
-                MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN,
-                MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
+                INPUT_MOUSE, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOUSEEVENTF_ABSOLUTE,
+                MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
+                MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE,
+                MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK,
                 MOUSEEVENTF_WHEEL, MOUSEINPUT, MOUSE_EVENT_FLAGS,
             },
             Input::{
@@ -135,16 +137,40 @@ fn win<T>(r: windows::core::Result<T>) -> Result<T, String> {
 pub fn cursor_delta(dx: i32, dy: i32) -> Result<(), String> {
     if dx == 0 && dy == 0 {
         return Ok(());
-    } // SAFETY: stack POINT is valid; signed coordinates preserve negative monitor positions.
+    } // Use the same ordered input stream as button transitions. Relative SendInput
+      // would apply the user's pointer acceleration a second time, so target an exact
+      // physical pixel on the entire virtual desktop instead.
     unsafe {
         let mut p = POINT::default();
         win(GetCursorPos(&mut p))?;
-        win(SetCursorPos(p.x.saturating_add(dx), p.y.saturating_add(dy)))
+        mouse_at(
+            p.x.saturating_add(dx),
+            p.y.saturating_add(dy),
+            MOUSE_EVENT_FLAGS::default(),
+            0,
+        )
     }
+}
+fn absolute_pixel(position: i32, origin: i32, extent: i32) -> Result<i32, String> {
+    if extent <= 0 || extent > 65536 {
+        return Err(
+            "Virtual desktop dimensions cannot be represented by absolute mouse input".into(),
+        );
+    }
+    let pixel = (i64::from(position) - i64::from(origin)).clamp(0, i64::from(extent) - 1);
+    // Target the center of the pixel's normalized interval, avoiding edge rounding.
+    Ok(((2 * pixel + 1) * 65536 / (2 * i64::from(extent))) as i32)
 }
 pub fn cursor_at(x: i32, y: i32) -> Result<(), String> {
     // SAFETY: signed physical screen coordinates are value arguments; Windows clamps desktop bounds.
     unsafe { win(SetCursorPos(x, y)) }
+}
+pub fn cursor_position() -> Result<(i32, i32), String> {
+    let mut p = POINT::default();
+    unsafe {
+        win(GetCursorPos(&mut p))?;
+    }
+    Ok((p.x, p.y))
 }
 pub fn startup_error(message: &str) {
     use windows::core::PCWSTR;
@@ -161,16 +187,31 @@ pub fn startup_error(message: &str) {
 }
 
 fn mouse(flags: MOUSE_EVENT_FLAGS, data: i32) -> Result<(), String> {
+    let (x, y) = cursor_position()?;
+    // Attach the current physical position to the button/wheel event itself. This
+    // also synchronizes clicks after a SetCursorPos teleport, before any movement.
+    mouse_at(x, y, flags, data)
+}
+fn mouse_at(x: i32, y: i32, flags: MOUSE_EVENT_FLAGS, data: i32) -> Result<(), String> {
     let input = INPUT {
         r#type: INPUT_MOUSE,
         Anonymous: INPUT_0 {
             mi: MOUSEINPUT {
-                dwFlags: flags,
+                dx: absolute_pixel(x, unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) }, unsafe {
+                    GetSystemMetrics(SM_CXVIRTUALSCREEN)
+                })?,
+                dy: absolute_pixel(y, unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) }, unsafe {
+                    GetSystemMetrics(SM_CYVIRTUALSCREEN)
+                })?,
+                dwFlags: flags | MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
                 mouseData: data as u32,
                 ..Default::default()
             },
         },
     };
+    send_mouse(input)
+}
+fn send_mouse(input: INPUT) -> Result<(), String> {
     // SAFETY: the INPUT union contains MOUSEINPUT and remains valid throughout the call.
     let n = unsafe { SendInput(&[input], size_of::<INPUT>() as i32) };
     if n == 1 {
@@ -250,6 +291,7 @@ impl Drop for Resources {
     }
 }
 struct Runtime {
+    calibration: Arc<crate::calibration::Recorder>,
     input: InputState,
     movement: Movement,
     scroll: ScrollScheduler,
@@ -275,7 +317,20 @@ impl Runtime {
     }
     fn move_by(&mut self, p: (i32, i32)) -> Result<(), String> {
         if p != (0, 0) {
+            let before = if self
+                .calibration
+                .active
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                Some(cursor_position()?)
+            } else {
+                None
+            };
             cursor_delta(p.0, p.1)?;
+            if let Some(before) = before {
+                self.calibration
+                    .sample(before, cursor_position()?, Instant::now());
+            }
             if let Some(t) = self.pending_input.take() {
                 if self.dispatch.len() == 512 {
                     self.dispatch.pop_front();
@@ -315,8 +370,9 @@ pub fn run(
     rx: mpsc::Receiver<Command>,
     status: Arc<Mutex<Status>>,
     ready: mpsc::Sender<Result<usize, String>>,
+    calibration: Arc<crate::calibration::Recorder>,
 ) -> Result<(), String> {
-    let result = run_inner(config, app, rx, status, &ready);
+    let result = run_inner(config, app, rx, status, &ready, calibration);
     if let Err(e) = &result {
         let _ = ready.send(Err(e.clone()));
     }
@@ -328,6 +384,7 @@ fn run_inner(
     rx: mpsc::Receiver<Command>,
     status: Arc<Mutex<Status>>,
     ready: &mpsc::Sender<Result<usize, String>>,
+    calibration: Arc<crate::calibration::Recorder>,
 ) -> Result<(), String> {
     let mut res = Resources {
         hwnd: HWND::default(),
@@ -339,6 +396,11 @@ fn run_inner(
     };
     // SAFETY: all Win32 handles below are confined to this thread and owned by Resources.
     unsafe {
+        if SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2).is_invalid() {
+            let error = windows::core::Error::from_win32().to_string();
+            let _ = ready.send(Err(error.clone()));
+            return Err(error);
+        }
         let module = win(GetModuleHandleW(None))?;
         res.module = module.into();
         let class = WNDCLASSW {
@@ -380,18 +442,20 @@ fn run_inner(
             NOTIFY_FOR_THIS_SESSION,
         ))?;
         res.session = true;
-        win(RegisterHotKey(
-            Some(res.hwnd),
-            1,
-            MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT,
-            0x4b,
-        ))?;
-        win(RegisterHotKey(
-            Some(res.hwnd),
-            2,
-            MOD_CONTROL | MOD_ALT | MOD_NOREPEAT,
-            config.grid.key as u32,
-        ))?;
+        if crate::diagnostic_dir().is_none() {
+            win(RegisterHotKey(
+                Some(res.hwnd),
+                1,
+                MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_NOREPEAT,
+                0x4b,
+            ))?;
+            win(RegisterHotKey(
+                Some(res.hwnd),
+                2,
+                MOD_CONTROL | MOD_ALT | MOD_NOREPEAT,
+                config.grid.key as u32,
+            ))?;
+        }
         // High-resolution one-shot timer on supported Windows; ordinary waitable timer otherwise.
         res.timer = CreateWaitableTimerExW(None, None, 0x2, TIMER_ALL_ACCESS.0)
             .or_else(|_| CreateWaitableTimerExW(None, None, 0, TIMER_ALL_ACCESS.0))
@@ -399,6 +463,7 @@ fn run_inner(
     }
     let clock = Instant::now();
     let mut runtime = Runtime {
+        calibration,
         input: InputState::default(),
         movement: Movement::default(),
         scroll: ScrollScheduler::default(),
@@ -419,6 +484,7 @@ fn run_inner(
         s.enabled = runtime.config.enabled;
         s.devices = device_count();
         s.mode = "Normal".into();
+        s.normal_max_speed = runtime.config.normal.max_speed;
     }
     ready
         .send(Ok(res.hwnd.0 as usize))
@@ -432,6 +498,21 @@ fn run_inner(
         last_loop = Instant::now();
         for command in rx.try_iter() {
             match command {
+                #[cfg(feature = "diagnostics")]
+                Command::DiagnosticKey(key, down, ack) => {
+                    enqueue(Event::Key(usize::MAX, key, down));
+                    let _ = ack.send(Ok(()));
+                }
+                Command::Reposition(x, y, ack) => {
+                    runtime.calibration.teleport();
+                    runtime.input.cancel_directions();
+                    runtime.movement.reset(now);
+                    runtime
+                        .movement
+                        .input(&runtime.input, &runtime.config, now, None);
+                    runtime.pending_input = None;
+                    let _ = ack.send(cursor_at(x, y));
+                }
                 Command::Stop => {
                     runtime.cleanup(now)?;
                     return Ok(());
@@ -451,8 +532,22 @@ fn run_inner(
                     let mut fatal = None;
                     let result = (|| {
                         c.validate().map_err(|e| e.to_string())?;
-                        runtime.cleanup(now)?;
-                        if c.grid.key != runtime.config.grid.key {
+                        if *c == runtime.config {
+                            return Ok(());
+                        }
+                        if c.bindings != runtime.config.bindings
+                            || c.enabled != runtime.config.enabled
+                        {
+                            runtime.cleanup(now)?;
+                        } else {
+                            runtime.movement.configure(&runtime.config, &c, now);
+                            if c.scroll != runtime.config.scroll {
+                                runtime.scroll.reset();
+                            }
+                        }
+                        if c.grid.key != runtime.config.grid.key
+                            && crate::diagnostic_dir().is_none()
+                        {
                             unsafe {
                                 win(UnregisterHotKey(Some(res.hwnd), 2))?;
                                 if let Err(e) = RegisterHotKey(
@@ -476,8 +571,9 @@ fn run_inner(
                             }
                         }
                         runtime.config = *c;
-                        status.lock().unwrap_or_else(|p| p.into_inner()).enabled =
-                            runtime.config.enabled;
+                        let mut s = status.lock().unwrap_or_else(|p| p.into_inner());
+                        s.enabled = runtime.config.enabled;
+                        s.normal_max_speed = runtime.config.normal.max_speed;
                         Ok(())
                     })();
                     let _ = ack.send(result);
@@ -507,6 +603,10 @@ fn run_inner(
             let now = clock.elapsed().as_secs_f64();
             match event {
                 Event::Key(device, key, down) => {
+                    if crate::diagnostic_dir().is_some() && device != usize::MAX {
+                        continue;
+                    }
+                    let was_moving = crate::movement::direction(&runtime.input) != (0, 0);
                     devices.insert(device);
                     if runtime.paused || runtime.suspended {
                         runtime.input.suppress(device, key, down);
@@ -515,6 +615,14 @@ fn run_inner(
                     if let Some((action, make)) =
                         runtime.input.transition(device, key, down, &runtime.config)
                     {
+                        if runtime.config.features.history_enabled
+                            && !was_moving
+                            && crate::movement::direction(&runtime.input) != (0, 0)
+                        {
+                            if let Ok(p) = cursor_position() {
+                                crate::cursor_tools::record(&app, p, "Movement start");
+                            }
+                        }
                         status.lock().unwrap_or_else(|p| p.into_inner()).last_action = Some(
                             format!("{action:?} {}", if make { "pressed" } else { "released" }),
                         );
@@ -532,6 +640,15 @@ fn run_inner(
                             },
                         );
                         runtime.move_by(p)?;
+                        if runtime.config.features.history_enabled
+                            && action.direction()
+                            && !make
+                            && crate::movement::direction(&runtime.input) == (0, 0)
+                        {
+                            if let Ok(p) = cursor_position() {
+                                crate::cursor_tools::record(&app, p, "Movement stop");
+                            }
+                        }
                         runtime.sync_buttons()?;
                         runtime.scroll(now)?;
                     }
@@ -549,6 +666,18 @@ fn run_inner(
                     crate::grid::cancel_from_native(&app);
                 }
                 Event::Session(suspended) => {
+                    if suspended
+                        && runtime
+                            .calibration
+                            .mode
+                            .load(std::sync::atomic::Ordering::Relaxed)
+                            != 0
+                    {
+                        let handle = app.clone();
+                        std::thread::spawn(move || {
+                            let _ = crate::calibration::cancel(&handle, true);
+                        });
+                    }
                     runtime.suspended = suspended;
                     if let Err(e) = runtime.cleanup(now) {
                         if suspended {
@@ -569,7 +698,10 @@ fn run_inner(
                     status.lock().unwrap_or_else(|p| p.into_inner()).enabled = false;
                     crate::grid::cancel_from_native(&app);
                     let handle = app.clone();
-                    std::thread::spawn(move || crate::emergency_disabled(&handle));
+                    std::thread::spawn(move || {
+                        crate::emergency_disabled(&handle);
+                        let _ = crate::calibration::cancel(&handle, true);
+                    });
                 }
                 Event::Grid => {
                     if runtime.config.enabled && !runtime.paused && !runtime.suspended {
@@ -593,12 +725,16 @@ fn run_inner(
         let instant = Instant::now();
         if runtime.input.active() && instant >= next_tick {
             let now = clock.elapsed().as_secs_f64();
-            match runtime.movement.tick(&runtime.config, now) {
-                Ok(p) => runtime.move_by(p)?,
-                Err(()) => {
-                    runtime.cleanup(now)?;
-                    status.lock().unwrap_or_else(|p| p.into_inner()).stalls += 1;
+            if runtime.movement.directional() {
+                match runtime.movement.tick(&runtime.config, now) {
+                    Ok(p) => runtime.move_by(p)?,
+                    Err(()) => {
+                        runtime.cleanup(now)?;
+                        status.lock().unwrap_or_else(|p| p.into_inner()).stalls += 1;
+                    }
                 }
+            } else {
+                runtime.movement.idle_tick(now);
             }
             runtime.scroll(now)?;
             runtime.sync_buttons()?;
@@ -611,11 +747,13 @@ fn run_inner(
             }
             next_tick = instant + Duration::from_millis(4);
         } else if !runtime.input.active() {
-            runtime.movement.reset(clock.elapsed().as_secs_f64());
+            // Input transitions already stop movement; retain the recent release for correction detection.
             next_tick = instant + Duration::from_millis(4);
         }
         // Poll only selected held/blocked control VKs, never ordinary keyboard activity.
-        if !runtime.suspended && instant.duration_since(last_reconcile) >= Duration::from_millis(50)
+        if !runtime.suspended
+            && instant.duration_since(last_reconcile) >= Duration::from_millis(50)
+            && crate::diagnostic_dir().is_none()
         {
             for key in runtime.input.keys() {
                 if unsafe { GetAsyncKeyState(key as i32) } >= 0 {
@@ -678,8 +816,36 @@ fn run_inner(
 }
 
 #[cfg(test)]
+#[path = "native_drag_tests.rs"]
+mod drag_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn absolute_mouse_coordinates_preserve_pixels_and_negative_origins() {
+        for extent in [1, 1280, 1920, 3840, 7680, 65536] {
+            for origin in [-3840, 0, 1920] {
+                for pixel in 0..extent {
+                    let value = absolute_pixel(origin + pixel, origin, extent).unwrap();
+                    assert_eq!(
+                        i64::from(value) * i64::from(extent) / 65536,
+                        i64::from(pixel)
+                    );
+                }
+                assert_eq!(
+                    absolute_pixel(origin - 1, origin, extent),
+                    absolute_pixel(origin, origin, extent)
+                );
+                assert_eq!(
+                    absolute_pixel(origin + extent, origin, extent),
+                    absolute_pixel(origin + extent - 1, origin, extent)
+                );
+            }
+        }
+        assert!(absolute_pixel(0, 0, 0).is_err());
+        assert!(absolute_pixel(0, 0, 65537).is_err());
+    }
     use windows::Win32::{
         Foundation::{CloseHandle, WAIT_OBJECT_0},
         System::Threading::WaitForSingleObject,

@@ -84,6 +84,12 @@ pub struct GridConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub profiles: Vec<crate::profiles::Profile>,
+    #[serde(default)]
+    pub bookmarks: Vec<crate::locations::Location>,
+    #[serde(default)]
+    pub features: crate::refinements::Features,
     pub version: u32,
     pub enabled: bool,
     pub bindings: BTreeMap<Action, u16>,
@@ -99,6 +105,9 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            profiles: Vec::new(),
+            bookmarks: Vec::new(),
+            features: crate::refinements::Features::default(),
             version: 1,
             enabled: true,
             bindings: Action::ALL
@@ -154,6 +163,46 @@ fn bounded(name: &str, value: f64, min: f64, max: f64) -> Result<(), Error> {
 }
 impl Config {
     pub fn validate(&self) -> Result<(), Error> {
+        if self.profiles.len() > 32 {
+            return Err(Error::Validation(
+                "At most 32 application profiles are supported".into(),
+            ));
+        }
+        let mut paths = std::collections::BTreeSet::new();
+        for p in &self.profiles {
+            if p.name.trim().is_empty()
+                || p.name.len() > 80
+                || !std::path::Path::new(&p.executable).is_absolute()
+                || !p.executable.to_lowercase().ends_with(".exe")
+                || !paths.insert(p.executable.replace('/', "\\").to_lowercase())
+            {
+                return Err(Error::Validation(
+                    "Profiles need a unique absolute executable path and a name".into(),
+                ));
+            }
+            let mut candidate = self.clone();
+            candidate.profiles.clear();
+            candidate.features.profiles_enabled = true;
+            candidate.profiles.push(p.clone());
+            candidate.profiles[0].enabled = true;
+            let mut resolved = crate::profiles::effective(&candidate, &p.executable);
+            resolved.profiles.clear();
+            // Validate override parameters even if their global availability is disabled.
+            if let Some(t) = &p.tap {
+                resolved.features.tap = t.clone();
+            }
+            if let Some(t) = &p.braking {
+                resolved.features.braking = t.clone();
+            }
+            if let Some(t) = &p.axes {
+                resolved.features.axes = t.clone();
+            }
+            resolved.validate()?;
+        }
+        if self.bookmarks.len() > 64 || self.bookmarks.iter().any(|b| !b.validate()) {
+            return Err(Error::Validation("Invalid cursor bookmarks".into()));
+        }
+        self.features.validate().map_err(Error::Validation)?;
         if self.version != 1 {
             return Err(Error::Validation(
                 "Unsupported configuration version".into(),

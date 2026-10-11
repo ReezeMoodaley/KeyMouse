@@ -129,6 +129,9 @@ small {
 nav {
   display: grid;
   gap: 5px;
+  min-height: 0;
+  overflow-y: auto;
+  flex-shrink: 1;
 }
 nav button {
   justify-content: flex-start;
@@ -865,3 +868,21 @@ footer > div {
     padding-top: 0;
   }
 }
+/* Physical target coordinates are converted to CSS pixels in the calibration overlay. */
+.precision-guide section { scroll-margin-top: 16px; }
+.precision-guide .section-head { flex-wrap: wrap; gap: 12px; }
+.precision-guide .section-head button { border-color: var(--line); padding: 7px 10px; }
+.precision-guide ol { padding-left: 24px; line-height: 1.7; color: var(--muted); }
+.precision-guide li + li { margin-top: 10px; }
+.guide-current { border-left: 3px solid var(--accent); padding: 10px 14px; background: var(--panel2); }
+.guide-contents { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.guide-contents a { color: var(--accent); line-height: 1.6; }
+.guide-table-wrap { overflow-x: auto; }
+.precision-guide table { width: 100%; border-collapse: collapse; line-height: 1.6; }
+.precision-guide caption { text-align: left; margin-bottom: 12px; color: var(--muted); }
+.precision-guide th, .precision-guide td { padding: 12px; border: 1px solid var(--line); text-align: left; vertical-align: top; min-width: 160px; }
+.precision-guide th { background: var(--panel2); font-weight: 600; }
+.precision-guide td { color: var(--muted); }
+.calibration-overlay { position: fixed; inset: 0; background: transparent; }
+.calibration-target { position: absolute; border-radius: 50%; border: 1px solid #fff; background: #16a34a; padding: 0; min-width: 0; box-shadow: 0 0 0 1px #111; }
+.calibration-info { position: absolute; top: 12px; left: 12px; padding: 12px; border-radius: 8px; background: #111827; color: white; }

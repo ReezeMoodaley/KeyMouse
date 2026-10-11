@@ -93,7 +93,12 @@ pub fn open(app: &tauri::AppHandle) -> Result<(), String> {
         let window = if let Some(w) = app.get_webview_window("grid") {
             w
         } else {
-            WebviewWindowBuilder::new(app, "grid", WebviewUrl::App("index.html?grid=1".into()))
+            let mut builder =
+                WebviewWindowBuilder::new(app, "grid", WebviewUrl::App("index.html?grid=1".into()));
+            if let Some(dir) = crate::diagnostic_dir() {
+                builder = builder.data_directory(dir.join("webview"));
+            }
+            builder
                 .title("KeyMouse grid — focused selection")
                 .transparent(true)
                 .decorations(false)
@@ -179,7 +184,9 @@ pub fn command(
     }
     if action == "confirm" || s.level >= s.depth {
         let (x, y) = s.region.center();
-        crate::native::cursor_at(x, y)?;
+        crate::cursor_tools::record(app, crate::native::cursor_position()?, "Before grid");
+        state.engine.reposition(x, y)?;
+        crate::cursor_tools::record(app, crate::native::cursor_position()?, "Grid");
         drop(grid);
         close_inner(app)?;
         return Ok(None);

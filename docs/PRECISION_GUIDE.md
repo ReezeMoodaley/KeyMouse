@@ -1,0 +1,199 @@
+# KeyMouse precision guide
+
+Use Normal to approach, Precision to finish, and Turbo to travel. Accuracy comes first from a small initial step and a controllable starting speed. Add refinements one at a time and keep the combinations that improve your repeated target trials. The values below are starting points, not measured optimal settings for your keyboard or screen.
+
+## Start with a precise foundation
+
+Settings page: Movement.
+
+Settings edits take effect when you click Save changes. Every optional feature has its own toggle; turning one off keeps its saved parameters. Opening this guide changes no settings.
+
+For the smallest targets, set Precision step size to 1 pixel. A step of 10 jumps ten physical pixels per tap and can cross a small target before you can correct it. Hold the Precision modifier before pressing a direction.
+
+1. Save a simple baseline with the four movement refinements off: Tap versus Hold, acceleration strategy, Adaptive Braking and Per-Axis Acceleration.
+2. On Movement, start with Normal minimum 40 px/s, maximum 1200 px/s, duration 900 ms and exponent 1.6. For Precision, try minimum 8 px/s, maximum 80 px/s, duration 700 ms, step 1 pixel and hold delay 160 ms.
+3. Keep Turbo for long travel: minimum 900 px/s, maximum 4000 px/s, duration 350 ms and exponent 1.2 are reasonable starting values. Release Turbo before aiming at the destination.
+4. Enable one refinement, save, then repeat the same small-target exercise. Keep it only if it helps you stop accurately and correct comfortably.
+
+## Normal, Precision and Turbo
+
+Settings page: Keybindings.
+
+Normal is active without a mode modifier. Hold Precision for fine aiming; hold Turbo for faster travel. Precision wins if both modifiers are held. Switching modes restarts the movement ramp; releasing the final direction stops movement immediately.
+
+The default directions are F13 Up, F14 Down, F15 Left and F16 Right. F17 holds the left mouse button, F22 is Precision and F23 is Turbo. Use the Keybindings page if you have remapped them.
+
+To select text or drag a window, place the cursor at the start, hold the left-button key, then move. Hold Precision for the final adjustment and release the left-button key to finish. You do not need to press a direction before clicking. For small text selections, begin in Precision rather than Turbo.
+
+## Movement values and acceleration shape
+
+Settings page: Movement.
+
+Minimum speed controls the first continuous movement. Lower it when short presses overshoot. Maximum speed controls sustained travel; lowering it limits long holds. Acceleration duration is the time used by the ramp: increase it for a longer gentle approach, reduce it for faster travel.
+
+With Power curve, an exponent above 1 keeps the early ramp gentler; below 1 raises speed quickly at the beginning. For example, 0.2 is a very front-loaded curve. Minimum speed is still the floor: a high minimum cannot be made slow just by changing the exponent.
+
+The Movement graph shows the power curve calculated from these values. When Linear or Smoothstep is enabled, use the selected strategy's behavior rather than that graph's power-shaped line to judge the actual ramp.
+
+Continuous diagonal movement shares the active mode's total speed limit. Per-Axis Acceleration changes how the components build speed, while keeping that vector limit. Integer pixel steps can show small rounding differences.
+
+## Tap versus Hold
+
+Settings page: Refinements.
+
+Adds an immediate configured step to directional presses in Normal and Turbo. Precision continues to use its own step and hold delay; the two tap systems do not add together.
+
+Discrete Tap emits the step, then waits for the hold threshold before continuous movement. Each newly pressed axis has its own threshold, so adding a perpendicular key does not stop the axis already moving. Try step 1 and threshold 150 ms when you want small Normal-mode taps without holding Precision.
+
+Responsive Continuous emits the step and continues immediately. It feels more immediate, but a short press can travel the tap step plus continuous distance. Try step 1 with a low Normal minimum; use Discrete or Precision when repeatable tiny nudges matter more than immediacy.
+
+The Tap hold threshold matters for Discrete; it does not insert a delay into Responsive. Leave Tap versus Hold off if the original Normal ramp plus Precision already feels predictable.
+
+## Acceleration-strategy selector
+
+Settings page: Refinements.
+
+Enable acceleration strategy to select Power curve, Linear or Smoothstep. All three use the active mode's minimum speed, maximum speed and acceleration duration from Movement. Disabled uses the original power curve.
+
+Power curve also uses the exponent. Linear increases the speed evenly across the ramp. Smoothstep eases the start and finish of the ramp and ignores the exponent. It changes the acceleration shape, not the cursor's stopping behavior.
+
+For a balanced start, try Smoothstep with a low Normal minimum and a 700–900 ms Normal ramp. If you want direct control over how gentle the early ramp is, use Power with an exponent around 1.6–2 instead. Test both with identical speeds and duration.
+
+## Adaptive Braking
+
+Settings page: Refinements.
+
+Temporarily caps the speed of a qualifying fast reversal, or an opposite re-press shortly after release. It then restores the available speed smoothly. It does not detect your destination or coast after release: final-direction release still stops immediately.
+
+Correction window limits how soon an opposite re-press counts. Minimum prior speed excludes slow corrections. Corrective speed cap limits the correction only while the underlying speed would exceed it; recovery controls how long that constraint relaxes.
+
+Start with window 180 ms, cap 120 px/s, recovery 350 ms and minimum prior speed 200 px/s. Enable it if fast reversals are too large, especially after Turbo. If reversals feel sticky, shorten recovery or raise the cap; change one value at a time.
+
+Leave Brake perpendicular corrections off initially. Turning it on treats a qualifying right-angle change as a correction too, which can make intentional corners slower. Braking is inactive in Precision and cancels on mode changes. Holding opposite directions cancels their axis rather than counting as a correction.
+
+## Per-Axis Acceleration
+
+Settings page: Refinements.
+
+Gives horizontal and vertical movement separate ramp clocks. Adding a new axis starts that component gently while the existing component transitions smoothly. Releasing an axis stops that component immediately; total continuous speed remains bounded by the active mode's maximum.
+
+Try an 80 ms transition if adding a diagonal direction causes an abrupt change that makes aiming harder. A longer transition feels softer but takes longer to build the new component. A shorter transition reacts more sharply.
+
+Pair it with Smoothstep for gentle curves and diagonal additions. Add Discrete Tap only if you also want a deliberate wait before a newly pressed axis begins continuous travel. Test cornering separately before enabling perpendicular braking.
+
+## Precision magnifier
+
+Settings page: Refinements.
+
+Shows a lens while Precision is held. It enlarges what you see; it does not change the movement step, speed, target size or screen coordinates.
+
+Try zoom 2–3 and a 240-pixel lens with Precision step 1 for small controls, thin handles and fine text placement. If the lens obscures nearby context, reduce its size or zoom, or turn it off.
+
+Combine it with Calibration to see whether visibility improves successful selections. Check Diagnostics or the reported service error if a lens fails to appear.
+
+## Calibration: find your best combination
+
+Settings page: Calibration.
+
+Enable Calibration, save, then explicitly begin a Baseline or Experimental session. Enabling it alone does not start measurement. Click the start circle, move with KeyMouse, then click the destination. Avoid moving the physical mouse during a trial.
+
+Baseline disables the four movement refinements while retaining your global curves and Precision settings. Experimental uses your saved global movement settings. Application profiles are held out of both groups so the comparison stays consistent. A curve-value change requires separate sessions with the changed values; Baseline does not restore older curves.
+
+Use 12-pixel and 20-pixel targets, a distance that fits your display and at least 10 trials per group. Repeat in both orders. Prefer a combination with more reliable hits, fewer overshoots/corrections and comfortable timing; do not choose from one fastest trial.
+
+Elapsed time includes your confirmation clicks. Efficiency compares straight distance with generated cursor travel; closer to 1 means a more direct eligible path, not necessarily a better target hit. Physical interference, teleports or lost samples make a trial unsuitable for that metric. This is a movement comparison, not a physical keyboard-latency measurement.
+
+## Cursor history
+
+Settings page: Cursor tools.
+
+Records meaningful movement endpoints and explicit repositioning while enabled. Back and Forward return to recorded locations; this is location history, not an undo for a click, text edit or window drag.
+
+Use it for repeated navigation between areas. A new recorded movement after Back replaces the forward branch. Entries last for this KeyMouse process; use bookmarks for positions you need after restarting.
+
+History navigation repositions the cursor and requires held direction keys to be released before movement resumes. Avoid it during text selection, dragging or a measured calibration trial.
+
+## Bookmarks
+
+Settings page: Cursor tools.
+
+Save named locations for repeated targets. Start Capture, then place the cursor at the desired location during the three-second countdown. Save and restore locations with the bookmark controls; bookmarks persist across restarts.
+
+A bookmark follows its identified monitor if that monitor moves or changes resolution. It preserves a relative location on the monitor, not the identity of an application control. If a window moves, recapture the bookmark. A missing or ambiguous display reports an error instead of silently choosing another screen.
+
+Use bookmarks to get close to a stable toolbar or workspace, then Precision for the final adjustment. Repositioning resets the movement episode; release direction keys before resuming. Avoid bookmark jumps during an active drag or calibration trial.
+
+## Application profiles
+
+Settings page: Application profiles.
+
+Match an application's full executable path and override movement settings when it is foreground. Use a slower profile for an editor or drawing tool and a faster global setup for desktop navigation. Profiles follow the executable, not a window title or an individual website.
+
+Adding a profile captures the current Normal curve. Use the optional override controls to capture Precision, Turbo or refinements too; values are copied when captured, so recapture them after changing global settings if needed. The editor also lets you change a profile's Normal maximum speed.
+
+Global feature toggles take priority: a profile cannot turn on a refinement globally disabled. Enable both the profiles feature and the individual profile, then save. Foreground changes are checked periodically, so a transition is not instantaneous. Switching away or disabling profiles restores global movement settings.
+
+Tune global settings first and add profiles afterward. Keep profiles off while troubleshooting a surprising speed change. Calibration holds profiles out, so check the real application afterward as well.
+
+## Grid navigation, buttons and scrolling
+
+Settings page: Grid navigation.
+
+The grid is useful for a large jump followed by Precision aiming. The default shortcut is Ctrl+Alt+G. Select regions using the grid's displayed controls, refine toward the target, then confirm. Increasing depth allows smaller final regions.
+
+Grid, bookmarks and history explicitly reposition the cursor; they are not smooth drag tools. Finish a drag before using them, release held directions after a jump and use Precision to align the final pixels.
+
+Mouse & scrolling controls the mouse-button assignments, wheel amount and repeat timing. Smaller wheel amounts help fine scrolling but do not improve cursor aiming. F24 is the default horizontal-scroll modifier. The emergency shortcut Ctrl+Alt+Shift+K disables KeyMouse and releases its owned buttons.
+
+## General settings and Diagnostics
+
+Settings page: General.
+
+General controls startup behavior and the interface theme. These preferences do not alter aiming speed. Use Keybindings to match your keyboard's F13–F24 assignments and Mouse & scrolling to check button and wheel settings; save changes before testing.
+
+The main power control enables or disables KeyMouse. Disabling releases its owned buttons and cancels movement. After a safety cancellation, release and press your controls again rather than continuing an old hold.
+
+Diagnostics shows worker state, the last action, stalls and dispatch timing. Use it when a control behaves unexpectedly. Its dispatch timing is an internal software measurement, not an end-to-end physical keyboard latency result.
+
+## Suggested combinations by task
+
+Begin with the foundation above. These combinations add to those Movement values; they are suggestions to enter manually and save, not automatic presets. Leave other movement refinements off for the first comparison. Add profiles only after a global combination works well.
+
+| Task | Start with | Why / next adjustment |
+| --- | --- | --- |
+| Small controls and exact nudges | Precision step 1 + hold delay 160 ms + optional magnifier 2–3x | Tap to finish. Reduce Precision maximum if held aiming overshoots; keep Turbo for the approach. |
+| Balanced daily movement | Smoothstep + Normal minimum 40 px/s + 900 ms ramp; Tap off initially | Gentle build-up without a deliberate tap delay. Test Per-Axis with an 80 ms transition if diagonal additions feel abrupt. |
+| Accurate nudges without Precision | Discrete Tap: step 1, threshold 150 ms + low Normal minimum | A short press stays a small nudge. Add Smoothstep for holds; shorten the threshold if the wait is uncomfortable. |
+| Immediate response with gentle travel | Responsive Tap: step 1 + Smoothstep + low Normal minimum | Avoids a tap hold delay. Short presses include continuous travel, so use Precision for repeatable one-pixel placement. |
+| Frequent corners and diagonals | Smoothstep + Per-Axis transition 80 ms; perpendicular braking off | Build the new axis gently. Test deliberate corners before considering perpendicular braking. |
+| Long travel with smaller corrections | Turbo for travel + Adaptive Braking 180/120/350/200 + Precision at destination | Braking values are window ms / cap px/s / recovery ms / prior-speed threshold px/s. A qualifying reversal is capped; it will not automatically brake at a target. |
+| Text selection and window placement | Left-button hold + Normal for broad movement + Precision step 1 for finishing | Release the button to finish. Avoid Turbo near small text and avoid grid/history/bookmark jumps during the drag. |
+| Repeated locations in a workspace | Bookmark or grid for approach + Precision; optional history | Reposition close to the area, release directions, then aim. Recapture bookmarks when window layouts change. |
+
+## A short tuning routine
+
+Settings page: Calibration.
+
+1. Hold Precision and make ten separate direction taps with step 1. On an unclipped desktop path, they should move ten physical pixels. A larger result means check the step value and avoid holding through the delay.
+2. Aim at 12-pixel and 20-pixel targets. If tiny taps overshoot, reduce the step; if short continuous holds overshoot, lower minimum speed before changing maximum speed.
+3. Move 100 and 500 pixels and stop. If long holds overshoot, lower maximum speed or lengthen the ramp. If the cursor is too slow over a display, use Turbo rather than making Precision faster.
+4. Hold one direction, add a perpendicular direction, then reverse. Compare Per-Axis and braking separately. Keep only changes that make those transitions more predictable.
+5. Select a word and drag a test window with left-click held before movement. Compare broad Normal movement with Precision finishing. Use the current build with the drag fix.
+6. Run matched Calibration groups, then repeat in your real application. Record the values and results so you can return to a known comfortable combination.
+
+## When the cursor does not feel precise
+
+Settings page: Diagnostics.
+
+| Symptom | Check first |
+| --- | --- |
+| A single Precision tap jumps too far | Movement → Precision → step size. Set 1 for one-pixel taps; hold Precision before pressing the direction. |
+| Smoothstep ignores exponent edits | Expected: Smoothstep uses speeds and duration, but not exponent. Select Power to use that value. |
+| Movement jumps to a high speed immediately | Lower the active mode's minimum. If using Power, an exponent below 1 raises the early ramp quickly. |
+| The cursor waits after a tap | Check Discrete Tap's threshold and Precision's separate hold delay. Responsive has no optional tap delay. |
+| Reversals or corners feel slow | Disable braking to compare, shorten recovery or raise its cap. Keep perpendicular braking off while testing intentional corners. |
+| Releasing a direction leaves motion | Release all controls and check Diagnostics for errors or stalls. Use the emergency shortcut if needed; this is not intended inertia. |
+| Speed differs between applications | Disable application profiles and save to compare global settings; inspect captured overrides. |
+| A bookmark misses a moved control | It follows a monitor-relative location, not the control itself. Reposition the window consistently or recapture. |
+| Clicks or dragging fail in a particular app | Use the updated drag-fixed build. Check Diagnostics and test ordinary non-elevated text. Windows can reject input into elevated applications. |
+| There are too many interacting settings | Return to the foundation with four movement refinements off; re-enable and compare one at a time. |

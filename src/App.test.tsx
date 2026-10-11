@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import {
   actions,
+  defaultFeatures,
   validate,
   curveSpeed,
   type Config,
@@ -11,6 +12,9 @@ import {
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const defaults: Config = {
+  profiles: [],
+  bookmarks: [],
+  features: structuredClone(defaultFeatures),
   version: 1,
   enabled: true,
   bindings: Object.fromEntries(
