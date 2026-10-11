@@ -311,7 +311,7 @@ impl Store {
         self.atomic_write(&self.path.with_extension("last-good.json"), &bytes)?;
         self.atomic_write(&self.path, &bytes)
     }
-    fn atomic_write(&self, path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    pub(crate) fn atomic_write(&self, path: &Path, bytes: &[u8]) -> Result<(), Error> {
         let tmp = path.with_extension("tmp");
         let mut file = fs::File::create(&tmp)?;
         file.write_all(bytes)?;

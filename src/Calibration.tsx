@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { TerminalPanel, MetricReadout } from "./Terminal";
 import type { Config } from "./types";
 interface Session {
   display: { x: number; y: number; width: number; height: number };
@@ -126,9 +127,9 @@ export default function Calibration({
       features: { ...config.features, calibration: value },
     });
   return (
-    <>
-      <section className="card">
-        <h2>Calibration sessions</h2>
+    <div className="terminal-grid calibration-workspace">
+      <section className="card col-3">
+        <h2>Test setup</h2>
         <label className="toggle-row">
           <strong>Enable calibration</strong>
           <input
@@ -189,8 +190,96 @@ export default function Calibration({
         </button>
         {error && <p role="alert">{error}</p>}
       </section>
-      <section className="card">
-        <h2>Trial results</h2>
+      <TerminalPanel
+        title="Calibration canvas"
+        span={6}
+        className="canvas-panel"
+      >
+        <div className="calibration-canvas">
+          <svg
+            viewBox="0 0 500 270"
+            role="img"
+            aria-label="Calibration layout preview, measurement takes place on the native display overlay"
+          >
+            <path
+              d="M90 135H410"
+              stroke="var(--km-border-strong)"
+              strokeDasharray="4 4"
+            />
+            <circle
+              cx="90"
+              cy="135"
+              r="12"
+              stroke="var(--km-accent-primary)"
+              fill="none"
+            />
+            <circle cx="410" cy="135" r="12" fill="var(--km-accent-primary)" />
+            <text x="65" y="175" fill="var(--km-text-secondary)">
+              Start
+            </text>
+            <text x="380" y="175" fill="var(--km-text-secondary)">
+              Target
+            </text>
+          </svg>
+        </div>
+        <p>
+          Layout preview only. Begin a session to open the actual physical-pixel
+          targets on your display. Measurement geometry has no glow, CRT
+          distortion or scanlines.
+        </p>
+      </TerminalPanel>
+      <TerminalPanel title="Live trial" span={3}>
+        <MetricReadout
+          label="Session"
+          value={snapshot.session?.group ?? "Idle"}
+        />
+        <p>
+          Completed: {snapshot.session?.completed ?? 0} /{" "}
+          {snapshot.session?.trials ?? c.trials}
+        </p>
+        <p>
+          {snapshot.session
+            ? snapshot.session.measuring
+              ? "Move to target and click"
+              : "Click start to begin timing"
+            : "Save setup, then begin baseline or experimental."}
+        </p>
+      </TerminalPanel>
+      <TerminalPanel title="Performance summary" span={8}>
+        <div className="readout-grid">
+          <MetricReadout
+            label="Completed trials"
+            value={snapshot.results.length}
+          />
+          <MetricReadout
+            label="Eligible efficiency samples"
+            value={snapshot.results.filter((r) => r.efficiency !== null).length}
+          />
+        </div>
+        <p>
+          Efficiency excludes teleports, unobserved movement and dropped
+          samples. Interpret repeated trials, not a single result.
+        </p>
+      </TerminalPanel>
+      <TerminalPanel title="A/B comparison" span={4}>
+        {["baseline", "experimental"].map((group) => {
+          const rows = snapshot.results.filter((r) => r.group === group);
+          return (
+            <p key={group}>
+              {group}:{" "}
+              {rows.length
+                ? `${(rows.reduce((sum, r) => sum + r.elapsed_ms, 0) / rows.length).toFixed(1)} ms mean across ${rows.length} trials`
+                : "No trials"}
+            </p>
+          );
+        })}
+        <p>
+          Baseline holds out movement refinements; experimental uses saved
+          settings. Profiles are suspended in both.
+        </p>
+      </TerminalPanel>
+      <section className="card col-12">
+        <h2>Session history</h2>
         <p>
           Generated path sums actual cursor displacements around KeyMouse
           updates. Efficiency is straight distance / generated path and is
@@ -199,42 +288,44 @@ export default function Calibration({
           several trials; one success is not evidence of superiority. Results
           remain in this process only.
         </p>
-        <table>
-          <thead>
-            <tr>
-              <th>Group</th>
-              <th>Time (ms)</th>
-              <th>Path (px)</th>
-              <th>Efficiency</th>
-              <th>Corrections</th>
-              <th>Overshoots</th>
-              <th>Quality</th>
-            </tr>
-          </thead>
-          <tbody>
-            {snapshot.results.map((r, i) => (
-              <tr key={i}>
-                <td>{r.group}</td>
-                <td>{r.elapsed_ms.toFixed(1)}</td>
-                <td>{r.generated_path.toFixed(1)}</td>
-                <td>
-                  {r.efficiency === null
-                    ? "Excluded"
-                    : `${(r.efficiency * 100).toFixed(1)}%`}
-                </td>
-                <td>{r.corrections}</td>
-                <td>{r.overshoots}</td>
-                <td>
-                  {r.ambiguous ? "Ambiguous " : ""}
-                  {r.teleports ? `${r.teleports} teleports ` : ""}
-                  {r.dropped_samples ? `${r.dropped_samples} dropped ` : ""}
-                  {r.samples} samples
-                </td>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Group</th>
+                <th>Time (ms)</th>
+                <th>Path (px)</th>
+                <th>Efficiency</th>
+                <th>Corrections</th>
+                <th>Overshoots</th>
+                <th>Quality</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {snapshot.results.map((r, i) => (
+                <tr key={i}>
+                  <td>{r.group}</td>
+                  <td>{r.elapsed_ms.toFixed(1)}</td>
+                  <td>{r.generated_path.toFixed(1)}</td>
+                  <td>
+                    {r.efficiency === null
+                      ? "Excluded"
+                      : `${(r.efficiency * 100).toFixed(1)}%`}
+                  </td>
+                  <td>{r.corrections}</td>
+                  <td>{r.overshoots}</td>
+                  <td>
+                    {r.ambiguous ? "Ambiguous " : ""}
+                    {r.teleports ? `${r.teleports} teleports ` : ""}
+                    {r.dropped_samples ? `${r.dropped_samples} dropped ` : ""}
+                    {r.samples} samples
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
-    </>
+    </div>
   );
 }
