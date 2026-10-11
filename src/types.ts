@@ -34,6 +34,9 @@ export interface Curve {
   exponent: number;
 }
 export interface Config {
+  profiles: Profile[];
+  bookmarks: Location[];
+  features: Features;
   version: number;
   enabled: boolean;
   bindings: Record<Action, number>;
@@ -51,7 +54,83 @@ export interface Config {
   start_at_login: boolean;
   theme: "system" | "light" | "dark";
 }
+export interface Profile {
+  name: string;
+  executable: string;
+  enabled: boolean;
+  normal: Curve | null;
+  precision: Config["precision"] | null;
+  turbo: Curve | null;
+  tap: Features["tap"] | null;
+  acceleration: Features["acceleration"] | null;
+  braking: Features["braking"] | null;
+  axes: Features["axes"] | null;
+}
+export interface Location {
+  name: string;
+  x: number;
+  y: number;
+  display: {
+    name: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+  u: number;
+  v: number;
+}
+export interface Features {
+  tap: {
+    enabled: boolean;
+    strategy: "discrete" | "responsive";
+    step: number;
+    hold_ms: number;
+  };
+  acceleration: {
+    enabled: boolean;
+    strategy: "power" | "linear" | "smoothstep";
+  };
+  braking: {
+    enabled: boolean;
+    perpendicular: boolean;
+    window_ms: number;
+    cap: number;
+    recovery_ms: number;
+    minimum_speed: number;
+  };
+  axes: { enabled: boolean; transition_ms: number };
+  magnifier: { enabled: boolean; zoom: number; size: number };
+  calibration: {
+    enabled: boolean;
+    target_size: number;
+    distance: number;
+    trials: number;
+  };
+  history_enabled: boolean;
+  bookmarks_enabled: boolean;
+  profiles_enabled: boolean;
+}
+export const defaultFeatures: Features = {
+  tap: { enabled: false, strategy: "discrete", step: 1, hold_ms: 150 },
+  acceleration: { enabled: false, strategy: "power" },
+  braking: {
+    enabled: false,
+    perpendicular: false,
+    window_ms: 180,
+    cap: 120,
+    recovery_ms: 350,
+    minimum_speed: 200,
+  },
+  axes: { enabled: false, transition_ms: 80 },
+  magnifier: { enabled: false, zoom: 3, size: 240 },
+  calibration: { enabled: false, target_size: 20, distance: 500, trials: 5 },
+  history_enabled: false,
+  bookmarks_enabled: false,
+  profiles_enabled: false,
+};
 export interface Status {
+  normal_max_speed?: number;
   running: boolean;
   enabled: boolean;
   moving: boolean;
@@ -66,6 +145,7 @@ export interface Status {
   dispatch_samples: number;
 }
 export interface Snapshot {
+  service_error?: string | null;
   config: Config;
   status: Status;
   warning: string | null;
@@ -91,6 +171,37 @@ export function keyName(key: number) {
 }
 export function validate(c: Config): string[] {
   const errors: string[] = [];
+  const f = c.features;
+  const range = (v: number, min: number, max: number, integer = false) =>
+    Number.isFinite(v) &&
+    v >= min &&
+    v <= max &&
+    (!integer || Number.isInteger(v));
+  if (
+    !range(f.tap.step, 1, 10, true) ||
+    !range(f.tap.hold_ms, 0, 2000) ||
+    !range(f.braking.window_ms, 1, 1000) ||
+    !range(f.braking.cap, 1, 10000) ||
+    !range(f.braking.recovery_ms, 1, 2000) ||
+    !range(f.braking.minimum_speed, 1, 10000) ||
+    !range(f.axes.transition_ms, 1, 500) ||
+    !range(f.magnifier.zoom, 1.5, 8) ||
+    !range(f.magnifier.size, 120, 600, true) ||
+    !range(f.calibration.target_size, 4, 100, true) ||
+    !range(f.calibration.distance, 10, 3840, true) ||
+    !range(f.calibration.trials, 1, 100, true)
+  )
+    errors.push("Refinement parameters are outside their supported ranges.");
+  if (
+    c.profiles.some(
+      (p) =>
+        !p.name.trim() || !/^([a-z]:[\\/]|\\\\).+\.exe$/i.test(p.executable),
+    ) ||
+    new Set(
+      c.profiles.map((p) => p.executable.replaceAll("/", "\\").toLowerCase()),
+    ).size !== c.profiles.length
+  )
+    errors.push("Profiles need a name and unique absolute executable paths.");
   if (new Set(Object.values(c.bindings)).size !== actions.length)
     errors.push("Each action needs a distinct binding.");
   if (

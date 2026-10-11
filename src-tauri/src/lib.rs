@@ -1,10 +1,32 @@
+mod calibration;
 mod config;
+mod cursor_tools;
+#[cfg(feature = "diagnostics")]
+mod diagnostics;
 mod engine;
 mod grid;
 mod input;
+mod locations;
+mod magnifier;
 mod movement;
+#[cfg(test)]
+mod movement_baseline;
+#[cfg(test)]
+mod movement_regression;
 mod native;
+mod profiles;
+#[cfg(test)]
+mod refinement_tests;
+mod refinements;
 mod scroll;
+mod services;
+pub(crate) fn diagnostic_dir() -> Option<std::path::PathBuf> {
+    #[cfg(feature = "diagnostics")]
+    if let Some(path) = std::env::var_os("KEYMOUSE_DIAGNOSTIC_DATA_DIR") {
+        return Some(path.into());
+    }
+    None
+}
 use config::{Config, Store};
 use engine::{Engine, Status};
 use std::sync::Mutex;
@@ -15,6 +37,10 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt;
 pub struct AppState {
+    services: Mutex<Option<services::Services>>,
+    service_error: Mutex<Option<String>>,
+    history: Mutex<locations::History>,
+    displays: Mutex<Vec<locations::Display>>,
     config: Mutex<Config>,
     store: Store,
     engine: Engine,
@@ -25,6 +51,7 @@ pub struct AppState {
 }
 #[derive(serde::Serialize)]
 struct Snapshot {
+    service_error: Option<String>,
     config: Config,
     status: Status,
     warning: Option<String>,
@@ -32,6 +59,11 @@ struct Snapshot {
 }
 fn snapshot(state: &AppState) -> Snapshot {
     Snapshot {
+        service_error: state
+            .service_error
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone(),
         config: state
             .config
             .lock()
@@ -59,18 +91,70 @@ fn get_snapshot(state: tauri::State<AppState>) -> Snapshot {
 fn default_config() -> Config {
     Config::default()
 }
+#[tauri::command]
+fn cursor_tools_snapshot(app: tauri::AppHandle) -> cursor_tools::Snapshot {
+    cursor_tools::snapshot(&app)
+}
+#[tauri::command]
+async fn cursor_tool(
+    app: tauri::AppHandle,
+    action: String,
+    index: Option<usize>,
+    name: Option<String>,
+) -> Result<cursor_tools::Snapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || cursor_tools::command(&app, &action, index, name))
+        .await
+        .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn calibration_snapshot(app: tauri::AppHandle) -> calibration::Snapshot {
+    app.state::<AppState>().engine.calibration.snapshot()
+}
+#[tauri::command]
+async fn calibration_command(
+    app: tauri::AppHandle,
+    action: String,
+) -> Result<calibration::Snapshot, String> {
+    tauri::async_runtime::spawn_blocking(move || match action.as_str() {
+        "baseline" | "experimental" => calibration::begin(&app, &action),
+        "target" => calibration::click(&app),
+        "cancel" => {
+            calibration::cancel(&app, true)?;
+            Ok(app.state::<AppState>().engine.calibration.snapshot())
+        }
+        _ => Err("Unknown calibration action".into()),
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 fn update(app: &tauri::AppHandle, c: Config) -> Result<Snapshot, String> {
-    c.validate().map_err(|e| e.to_string())?;
     let state = app.state::<AppState>();
     let _guard = state.operation.lock().map_err(|e| e.to_string())?;
+    update_locked(app, c)
+}
+fn update_locked(app: &tauri::AppHandle, c: Config) -> Result<Snapshot, String> {
+    c.validate().map_err(|e| e.to_string())?;
+    let state = app.state::<AppState>();
     let old = state.config.lock().map_err(|e| e.to_string())?.clone();
+    if !c.features.calibration.enabled
+        || !c.enabled
+        || (state
+            .engine
+            .calibration
+            .mode
+            .load(std::sync::atomic::Ordering::Acquire)
+            != 0
+            && c != old)
+    {
+        calibration::cancel(app, false)?;
+    }
     let running = state
         .engine
         .status
         .lock()
         .map_err(|e| e.to_string())?
         .running;
-    if running {
+    if running && state.grid.lock().map_err(|e| e.to_string())?.is_some() {
         grid::close(app)?;
     }
     let autostart = app.autolaunch();
@@ -84,14 +168,23 @@ fn update(app: &tauri::AppHandle, c: Config) -> Result<Snapshot, String> {
     }
     let result = (|| {
         if running {
-            state.engine.apply(c.clone())?;
+            let mode = state
+                .engine
+                .calibration
+                .mode
+                .load(std::sync::atomic::Ordering::Acquire);
+            state.engine.apply(if mode != 0 {
+                calibration::effective(&c, mode)
+            } else {
+                profiles::current(&c)
+            })?;
         }
         state.store.save(&c).map_err(|e| e.to_string())?;
         Ok(())
     })();
     if let Err(e) = result {
         let rollback = if running {
-            state.engine.apply(old.clone())
+            state.engine.apply(profiles::current(&old))
         } else {
             Ok(())
         };
@@ -108,6 +201,9 @@ fn update(app: &tauri::AppHandle, c: Config) -> Result<Snapshot, String> {
         return Err(e);
     }
     *state.config.lock().map_err(|e| e.to_string())? = c.clone();
+    if let Some(service) = state.services.lock().map_err(|e| e.to_string())?.as_ref() {
+        service.refresh();
+    }
     *state.warning.lock().map_err(|e| e.to_string())? = if running {
         None
     } else {
@@ -209,11 +305,17 @@ pub(crate) fn emergency_disabled(app: &tauri::AppHandle) {
     set_tray(app, false);
 }
 pub fn run() {
-    let built = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)))
-        .plugin(tauri_plugin_autostart::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![
+    let mut builder = tauri::Builder::default();
+    if diagnostic_dir().is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| show(app)));
+    }
+    let handler: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
+        Box::new(tauri::generate_handler![
             get_snapshot,
+            cursor_tools_snapshot,
+            cursor_tool,
+            calibration_snapshot,
+            calibration_command,
             default_config,
             save_config,
             set_enabled,
@@ -221,9 +323,42 @@ pub fn run() {
             open_grid,
             grid_snapshot,
             grid_command
-        ])
+        ]);
+    #[cfg(feature = "diagnostics")]
+    let diagnostic_handler: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
+        Box::new(tauri::generate_handler![diagnostics::diagnostic]);
+    #[cfg(feature = "diagnostics")]
+    let handler = move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
+        if invoke.message.command() == "diagnostic" {
+            diagnostic_handler(invoke)
+        } else {
+            handler(invoke)
+        }
+    };
+    let mut context = tauri::generate_context!();
+    if diagnostic_dir().is_some() {
+        for window in &mut context.config_mut().app.windows {
+            window.create = false;
+        }
+    }
+    let built = builder
+        .plugin(tauri_plugin_autostart::Builder::new().build())
+        .invoke_handler(handler)
         .setup(|app| {
-            let store = Store::new(&app.path().app_config_dir()?)?;
+            if let Some(dir) = diagnostic_dir() {
+                let config = app
+                    .config()
+                    .app
+                    .windows
+                    .iter()
+                    .find(|w| w.label == "main")
+                    .ok_or("Missing diagnostic settings window")?
+                    .clone();
+                tauri::WebviewWindowBuilder::from_config(app, &config)?
+                    .data_directory(dir.join("webview"))
+                    .build()?;
+            }
+            let store = Store::new(&diagnostic_dir().unwrap_or(app.path().app_config_dir()?))?;
             let (mut config, mut warning) = store.load();
             match app.autolaunch().is_enabled() {
                 Ok(enabled) => config.start_at_login = enabled,
@@ -237,6 +372,10 @@ pub fn run() {
                 .unwrap_or_else(|p| p.into_inner())
                 .running;
             app.manage(AppState {
+                services: Mutex::new(None),
+                service_error: Mutex::new(None),
+                history: Mutex::new(locations::History::default()),
+                displays: Mutex::new(locations::displays(app.handle())?),
                 config: Mutex::new(config.clone()),
                 store,
                 engine,
@@ -245,6 +384,11 @@ pub fn run() {
                 operation: Mutex::new(()),
                 warning: Mutex::new(warning),
             });
+            *app.state::<AppState>()
+                .services
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()) =
+                Some(services::Services::start(app.handle().clone())?);
             let open = MenuItem::with_id(app, "open", "Open settings", true, None::<&str>)?;
             let toggle = MenuItem::with_id(app, "toggle", "Enable / disable", true, None::<&str>)?;
             let grid = MenuItem::with_id(app, "grid", "Grid navigation", true, None::<&str>)?;
@@ -265,8 +409,20 @@ pub fn run() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show(app),
                     "quit" => {
-                        app.state::<AppState>().engine.stop();
-                        app.exit(0);
+                        let app = app.clone();
+                        std::thread::spawn(move || {
+                            let service = app
+                                .state::<AppState>()
+                                .services
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .take();
+                            if let Some(service) = service {
+                                service.stop();
+                            }
+                            app.state::<AppState>().engine.stop();
+                            app.exit(0);
+                        });
                     }
                     "toggle" => {
                         let enabled = app
@@ -320,6 +476,11 @@ pub fn run() {
                     let _ = w.hide();
                 } else if w.label() == "grid" {
                     grid::cancel_from_native(w.app_handle());
+                } else if w.label() == "calibration" {
+                    let app = w.app_handle().clone();
+                    std::thread::spawn(move || {
+                        let _ = calibration::cancel(&app, true);
+                    });
                 }
             }
             tauri::WindowEvent::Focused(false)
@@ -331,7 +492,7 @@ pub fn run() {
             }
             _ => {}
         })
-        .build(tauri::generate_context!());
+        .build(context);
     let app = match built {
         Ok(app) => app,
         Err(error) => {
@@ -341,6 +502,15 @@ pub fn run() {
     };
     app.run(|app, event| {
         if matches!(event, tauri::RunEvent::Exit) {
+            if let Some(service) = app
+                .state::<AppState>()
+                .services
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .as_ref()
+            {
+                service.stop();
+            }
             app.state::<AppState>().engine.stop();
         }
     });

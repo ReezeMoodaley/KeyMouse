@@ -4,6 +4,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct Status {
+    pub normal_max_speed: f64,
     pub running: bool,
     pub enabled: bool,
     pub moving: bool,
@@ -18,20 +19,32 @@ pub struct Status {
     pub dispatch_samples: usize,
 }
 pub enum Command {
+    #[cfg(feature = "diagnostics")]
+    DiagnosticKey(u16, bool, mpsc::Sender<Result<(), String>>),
+    Reposition(i32, i32, mpsc::Sender<Result<(), String>>),
     Apply(Box<Config>, mpsc::Sender<Result<(), String>>),
     Pause(bool, mpsc::Sender<Result<(), String>>),
     Stop,
 }
 pub struct Engine {
+    pub calibration: Arc<crate::calibration::Recorder>,
     tx: mpsc::Sender<Command>,
     hwnd: usize,
     join: Mutex<Option<JoinHandle<()>>>,
     pub status: Arc<Mutex<Status>>,
 }
 impl Engine {
+    #[cfg(feature = "diagnostics")]
+    pub fn diagnostic_key(&self, key: u16, down: bool) -> Result<(), String> {
+        let (tx, rx) = mpsc::channel();
+        self.send(Command::DiagnosticKey(key, down, tx))?;
+        rx.recv_timeout(std::time::Duration::from_secs(3))
+            .map_err(|e| e.to_string())?
+    }
     pub fn unavailable(error: String) -> Self {
         let (tx, _rx) = mpsc::channel();
         Self {
+            calibration: Arc::new(crate::calibration::Recorder::default()),
             tx,
             hwnd: 0,
             join: Mutex::new(None),
@@ -42,6 +55,8 @@ impl Engine {
         }
     }
     pub fn start(config: Config, app: tauri::AppHandle) -> Result<Self, String> {
+        let calibration = Arc::new(crate::calibration::Recorder::default());
+        let recorder = calibration.clone();
         let (tx, rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
         let status = Arc::new(Mutex::new(Status::default()));
@@ -50,7 +65,7 @@ impl Engine {
             .name("keymouse-input-engine".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    crate::native::run(config, app, rx, shared.clone(), ready_tx)
+                    crate::native::run(config, app, rx, shared.clone(), ready_tx, recorder)
                 }));
                 let mut s = shared.lock().unwrap_or_else(|p| p.into_inner());
                 s.running = false;
@@ -68,6 +83,7 @@ impl Engine {
             .map_err(|e| e.to_string())?;
         match ready_rx.recv_timeout(std::time::Duration::from_secs(10)) {
             Ok(Ok(hwnd)) => Ok(Self {
+                calibration,
                 tx,
                 hwnd,
                 join: Mutex::new(Some(join)),
@@ -100,6 +116,12 @@ impl Engine {
     pub fn pause(&self, p: bool) -> Result<(), String> {
         let (tx, rx) = mpsc::channel();
         self.send(Command::Pause(p, tx))?;
+        rx.recv_timeout(std::time::Duration::from_secs(3))
+            .map_err(|e| e.to_string())?
+    }
+    pub fn reposition(&self, x: i32, y: i32) -> Result<(), String> {
+        let (tx, rx) = mpsc::channel();
+        self.send(Command::Reposition(x, y, tx))?;
         rx.recv_timeout(std::time::Duration::from_secs(3))
             .map_err(|e| e.to_string())?
     }

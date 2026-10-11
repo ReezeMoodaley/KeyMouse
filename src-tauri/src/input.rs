@@ -39,6 +39,16 @@ impl InputState {
         self.blocked.extend(self.pressed.keys().copied());
         self.pressed.clear();
     }
+    pub fn cancel_directions(&mut self) {
+        self.pressed.retain(|id, action| {
+            if action.direction() {
+                self.blocked.insert(*id);
+                false
+            } else {
+                true
+            }
+        });
+    }
     pub fn suppress(&mut self, device: usize, key: u16, down: bool) {
         self.pressed.remove(&(device, key));
         if down {

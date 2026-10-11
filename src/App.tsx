@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Refinements from "./Refinements";
+import CursorTools from "./CursorTools";
+import Profiles from "./Profiles";
+import Calibration from "./Calibration";
+import Guide from "./Guide";
 import {
   ArrowUpRight,
   Activity,
@@ -15,6 +20,7 @@ import {
   RotateCcw,
   Power,
   AlertCircle,
+  BookOpen,
 } from "lucide-react";
 import {
   actions,
@@ -30,6 +36,11 @@ import {
 const pages = [
   ["Overview", MousePointer2],
   ["Movement", SlidersHorizontal],
+  ["Refinements", SlidersHorizontal],
+  ["Cursor tools", MousePointer2],
+  ["Application profiles", Settings2],
+  ["Calibration", Activity],
+  ["Precision guide", BookOpen],
   ["Keybindings", Keyboard],
   ["Mouse & scrolling", Settings2],
   ["Grid navigation", Grid3X3],
@@ -198,7 +209,7 @@ export default function App() {
     setDraft(s.config);
     setStatus(s.status);
     setVersion(s.version);
-    setWarning(s.warning);
+    setWarning(s.service_error ?? s.warning);
   }, []);
   const load = useCallback(async () => {
     try {
@@ -214,7 +225,7 @@ export default function App() {
       invoke<Snapshot>("get_snapshot")
         .then((s) => {
           setStatus(s.status);
-          setWarning(s.warning);
+          setWarning(s.service_error ?? s.warning);
           setSaved(s.config);
           setDraft((c) => (c ? { ...c, enabled: s.config.enabled } : s.config));
         })
@@ -329,7 +340,9 @@ export default function App() {
                       ? "Dedicated controls that stay out of your typing."
                       : page === "Diagnostics"
                         ? "A clear view of the native engine, without keyboard history."
-                        : "Make KeyMouse work the way you do."}
+                        : page === "Precision guide"
+                          ? "Understand each feature and build a combination that suits your aiming."
+                          : "Make KeyMouse work the way you do."}
               </p>
             </div>
             {dirty && <span className="unsaved">Unsaved changes</span>}
@@ -478,6 +491,25 @@ export default function App() {
                     </p>
                   </div>
                 </>
+              )}
+              {page === "Refinements" && (
+                <Refinements config={draft} setConfig={setDraft} />
+              )}
+              {page === "Cursor tools" && (
+                <CursorTools
+                  config={draft}
+                  setConfig={setDraft}
+                  reload={load}
+                />
+              )}
+              {page === "Application profiles" && (
+                <Profiles config={draft} setConfig={setDraft} />
+              )}
+              {page === "Calibration" && (
+                <Calibration config={draft} setConfig={setDraft} />
+              )}
+              {page === "Precision guide" && (
+                <Guide config={draft} onNavigate={setPage} />
               )}
               {page === "Movement" && (
                 <>
@@ -832,6 +864,10 @@ export default function App() {
                     <dd>{status?.stalls ?? 0}</dd>
                     <dt>Maximum scheduled tick interval</dt>
                     <dd>{status?.max_tick_ms.toFixed(2) ?? "0"} ms</dd>
+                    <dt>Effective Normal speed limit</dt>
+                    <dd>
+                      {status?.normal_max_speed ?? draft.normal.max_speed} px/s
+                    </dd>
                     <dt>First pixel dispatch p95</dt>
                     <dd>
                       {status?.dispatch_p95_ms == null

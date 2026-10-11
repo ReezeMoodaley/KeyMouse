@@ -2,6 +2,8 @@
 
 **Final classification: Implemented but requires Windows/hardware validation.**
 
+Movement refinement extension: all nine requested features are connected to Rust, saved toggles and settings UI, with disabled behavior checked against the frozen v1 engine. See [implementation matrix](IMPLEMENTATION_MATRIX.md) for the current test counts/native checks, [movement design and calibration metrics](MOVEMENT_REFINEMENTS.md), and [comparison exercises](MOVEMENT_ACCEPTANCE.md). The verification table below records the original v1 handover; the linked matrix records the extension.
+
 The application compiles on Windows x64 and produces a release executable and an unsigned NSIS installer. Automated tests include real Win32 boundary calls. Physical Silakka54 input, interactive tray/startup/grid operation, mixed-DPI monitors, suspend/lock cleanup and measured performance/endurance have not been certified. Installer execution has not been tested in a separate clean Windows installation.
 
 ## Implemented
