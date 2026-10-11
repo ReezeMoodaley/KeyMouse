@@ -1,10 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Refinements from "./Refinements";
 import CursorTools from "./CursorTools";
 import Profiles from "./Profiles";
 import Calibration from "./Calibration";
 import Guide from "./Guide";
+import ThemeStudio from "./ThemeStudio";
+import { listen } from "@tauri-apps/api/event";
+import { TerminalPanel, MetricReadout } from "./Terminal";
+import {
+  usePresentation,
+  useObservedEvents,
+  RecentEvents,
+  ProfileReadout,
+  DiagnosticsScreen,
+  KeymapWorkspace,
+} from "./Presentation";
 import {
   ArrowUpRight,
   Activity,
@@ -36,17 +47,25 @@ import {
 const pages = [
   ["Overview", MousePointer2],
   ["Movement", SlidersHorizontal],
+  ["Keybindings", Keyboard],
+  ["Calibration", Activity],
+  ["Application profiles", Settings2],
+  ["Diagnostics", Activity],
+  ["Theme Studio", SunMoon],
+  ["General", Settings2],
+  ["About", BookOpen],
   ["Refinements", SlidersHorizontal],
   ["Cursor tools", MousePointer2],
-  ["Application profiles", Settings2],
-  ["Calibration", Activity],
-  ["Precision guide", BookOpen],
-  ["Keybindings", Keyboard],
   ["Mouse & scrolling", Settings2],
   ["Grid navigation", Grid3X3],
-  ["Diagnostics", Activity],
-  ["General", SunMoon],
+  ["Precision guide", BookOpen],
 ] as const;
+const pageLabel = (page: string) =>
+  ({
+    Overview: "Dashboard",
+    Keybindings: "Keymapping",
+    "Application profiles": "Profiles",
+  })[page] ?? page;
 function NumberField({
   label,
   value,
@@ -111,10 +130,22 @@ function Toggle({
     </label>
   );
 }
-export function CurveGraph({ curve }: { curve: Curve }) {
+export function CurveGraph({
+  curve,
+  strategy = "power",
+}: {
+  curve: Curve;
+  strategy?: "power" | "linear" | "smoothstep";
+}) {
   const points = Array.from({ length: 61 }, (_, i) => {
     const x = i / 60;
-    return `${32 + x * 526},${180 - (curveSpeed(curve, x * curve.ramp_ms) / Math.max(1, curve.max_speed)) * 150}`;
+    const speed =
+      strategy === "power"
+        ? curveSpeed(curve, x * curve.ramp_ms)
+        : curve.min_speed +
+          (curve.max_speed - curve.min_speed) *
+            (strategy === "linear" ? x : x * x * (3 - 2 * x));
+    return `${32 + x * 526},${180 - (speed / Math.max(1, curve.max_speed)) * 150}`;
   }).join(" ");
   return (
     <div className="curve">
@@ -194,10 +225,13 @@ function Bindings({
   );
 }
 export default function App() {
+  const { data: presentation } = usePresentation();
   const [page, setPage] = useState<string>("Overview");
   const [saved, setSaved] = useState<Config | null>(null);
+  const savedRef = useRef<Config | null>(null);
   const [draft, setDraft] = useState<Config | null>(null);
   const [status, setStatus] = useState<Status | null>(null);
+  const events = useObservedEvents(status);
   const [version, setVersion] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -205,6 +239,7 @@ export default function App() {
   const [notice, setNotice] = useState("");
   const [mode, setMode] = useState<"normal" | "precision" | "turbo">("normal");
   const accept = useCallback((s: Snapshot) => {
+    savedRef.current = s.config;
     setSaved(s.config);
     setDraft(s.config);
     setStatus(s.status);
@@ -226,16 +261,27 @@ export default function App() {
         .then((s) => {
           setStatus(s.status);
           setWarning(s.service_error ?? s.warning);
+          const previous = savedRef.current;
+          savedRef.current = s.config;
           setSaved(s.config);
-          setDraft((c) => (c ? { ...c, enabled: s.config.enabled } : s.config));
+          setDraft((c) =>
+            !c || JSON.stringify(c) === JSON.stringify(previous)
+              ? s.config
+              : { ...c, enabled: s.config.enabled },
+          );
         })
         .catch((e) => setError(String(e)));
     }, 1000);
     return () => clearInterval(timer);
   }, [load]);
   useEffect(() => {
-    document.documentElement.dataset.theme = draft?.theme ?? "system";
-  }, [draft?.theme]);
+    const subscription = listen<string>("navigate", (e) =>
+      setPage(e.payload),
+    ).catch(() => () => {});
+    return () => {
+      void subscription.then((stop) => stop()).catch(() => {});
+    };
+  }, []);
   const run = async (task: () => Promise<void>) => {
     setBusy(true);
     setError(null);
@@ -275,14 +321,15 @@ export default function App() {
       }
     });
   return (
-    <div className="app-shell">
+    <div className="app-shell effects-surface">
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-icon">
             <MousePointer2 size={22} />
           </div>
           <span>
-            KeyMouse<small>KEYBOARD → CURSOR</small>
+            <span className="crt-text">KEYMOUSE_</span>
+            <small>KEYBOARD → CURSOR</small>
           </span>
         </div>
         <div className="nav-label">WORKSPACE</div>
@@ -291,10 +338,13 @@ export default function App() {
             <button
               key={name}
               className={page === name ? "selected" : ""}
+              aria-label={pageLabel(name)}
+              title={pageLabel(name)}
+              aria-current={page === name ? "page" : undefined}
               onClick={() => setPage(name)}
             >
               <Icon size={18} />
-              {name}
+              <span className="nav-name">{pageLabel(name)}</span>
               {page === name && <span className="nav-dot" />}
             </button>
           ))}
@@ -303,7 +353,8 @@ export default function App() {
           <div className="keyboard-chip">
             <Command size={16} />
             <span>
-              Silakka54 ready<small>QMK / Vial compatible</small>
+              {status?.devices ?? "Unavailable"} keyboard devices
+              <small>Raw Input - firmware not inspected</small>
             </span>
           </div>
           <small>KeyMouse {version && `v${version}`} · Windows</small>
@@ -312,7 +363,7 @@ export default function App() {
       <main>
         <header className="topbar">
           <span>
-            Workspace <span className="slash">/</span> {page}
+            Workspace <span className="slash">/</span> {pageLabel(page)}
           </span>
           <button
             className={`status-pill ${status?.enabled && status.running ? "on" : ""}`}
@@ -330,7 +381,7 @@ export default function App() {
           <div className="page-title">
             <div>
               <span className="eyebrow">YOUR CURSOR, UNDER CONTROL</span>
-              <h1>{page}</h1>
+              <h1>{pageLabel(page)}</h1>
               <p>
                 {page === "Overview"
                   ? "A little precision. A lot less reaching for your mouse."
@@ -372,125 +423,159 @@ export default function App() {
           ) : (
             <>
               {page === "Overview" && (
-                <>
-                  <section className="hero-card">
-                    <div>
-                      <span className="eyebrow">LESS REACH. MORE FLOW.</span>
-                      <h2>
-                        Your keyboard.
-                        <br />
-                        Your entire desktop.
-                      </h2>
-                      <p>
-                        Precise taps, smooth acceleration, and fast travel.
-                        <br />
-                        All from your mouse layer.
-                      </p>
-                      <button
-                        className="primary"
-                        onClick={() => setPage("Movement")}
-                      >
+                <div className="terminal-grid dashboard">
+                  <TerminalPanel title="Engine status" span={8}>
+                    <div className="engine-summary">
+                      <div>
+                        <span className="eyebrow">KEYBOARD &gt; CURSOR</span>
+                        <h3 className="crt-readout">
+                          {status?.running
+                            ? status.enabled
+                              ? "Engine ready"
+                              : "Controls disabled"
+                            : "Engine unavailable"}
+                        </h3>
+                        <p>
+                          {status?.moving
+                            ? "Moving cursor"
+                            : "Waiting for dedicated input"}{" "}
+                          - {status?.mode ?? "Unknown"} mode
+                        </p>
+                      </div>
+                      <MetricReadout
+                        label="Raw Input devices"
+                        value={status?.devices ?? "Unavailable"}
+                      />
+                    </div>
+                    <p>
+                      Your keyboard. Your entire desktop. Precise taps,
+                      controlled acceleration, and fast travel.
+                    </p>
+                  </TerminalPanel>
+                  <TerminalPanel title="Quick controls" span={4}>
+                    <div className="button-stack">
+                      <button onClick={() => void enable()} disabled={busy}>
+                        {status?.enabled
+                          ? "Disable controls"
+                          : "Enable controls"}
+                      </button>
+                      <button onClick={() => setPage("Movement")}>
                         Tune movement <ArrowUpRight size={16} />
                       </button>
-                    </div>
-                    <div className="hero-keys">
-                      <div className="key-row">
-                        <kbd className="modifier">
-                          F22<small>precision</small>
-                        </kbd>
-                        <kbd>
-                          F13<small>↑</small>
-                        </kbd>
-                        <kbd className="modifier">
-                          F23<small>turbo</small>
-                        </kbd>
-                      </div>
-                      <div className="key-row">
-                        <kbd>
-                          F15<small>←</small>
-                        </kbd>
-                        <kbd>
-                          F14<small>↓</small>
-                        </kbd>
-                        <kbd>
-                          F16<small>→</small>
-                        </kbd>
-                      </div>
-                      <span>Default mouse-layer layout</span>
-                    </div>
-                  </section>
-                  <div className="stats">
-                    <article className="card">
-                      <Activity size={18} />
-                      <small>ENGINE HEALTH</small>
-                      <h3>{status?.running ? "Running" : "Unavailable"}</h3>
-                      <p>
-                        {status?.moving
-                          ? "Moving cursor"
-                          : status?.enabled
-                            ? "Waiting for input"
-                            : "Controls disabled"}
-                      </p>
-                    </article>
-                    <article className="card">
-                      <SlidersHorizontal size={18} />
-                      <small>ACTIVE PROFILE</small>
-                      <h3>{status?.mode || "Normal"}</h3>
-                      <p>
-                        {saved?.normal.min_speed}–{saved?.normal.max_speed} px/s
-                        · {saved?.normal.ramp_ms} ms ramp
-                      </p>
-                    </article>
-                    <article className="card">
-                      <Grid3X3 size={18} />
-                      <small>GO STRAIGHT THERE</small>
-                      <h3>Grid navigation</h3>
-                      <p>Ctrl + Alt + {keyName(draft.grid.key)}</p>
                       <button
-                        className="text-button"
                         onClick={() =>
                           void run(async () => {
                             await invoke("open_grid");
                           })
                         }
                       >
-                        Open grid <ArrowUpRight size={14} />
+                        Open grid
                       </button>
-                    </article>
-                  </div>
-                  <section className="card">
-                    <div className="section-head">
-                      <div>
-                        <h2>Your controls</h2>
-                        <p>Current saved mappings · momentary modifiers</p>
-                      </div>
                       <button
-                        className="text-button"
-                        onClick={() => setPage("Keybindings")}
+                        onClick={() =>
+                          void run(async () => {
+                            await invoke("open_mini");
+                          })
+                        }
                       >
-                        Edit bindings <ArrowUpRight size={14} />
+                        Mini Control Panel
                       </button>
                     </div>
-                    <div className="mapping-grid">
-                      {actions.map((a) => (
-                        <div key={a}>
-                          <span>{labels[a]}</span>
-                          <kbd>
-                            {keyName(saved?.bindings[a] ?? draft.bindings[a])}
-                          </kbd>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                  <div className="tip">
-                    <Keyboard size={20} />
+                  </TerminalPanel>
+                  <TerminalPanel title="Acceleration preview" span={8}>
+                    <CurveGraph
+                      curve={saved?.normal ?? draft.normal}
+                      strategy={
+                        saved?.features.acceleration.enabled
+                          ? saved.features.acceleration.strategy
+                          : "power"
+                      }
+                    />
                     <p>
-                      <strong>Built for your Silakka54.</strong> Assign F13–F24
-                      to your Vial mouse layer. Hold precision for pixel-level
-                      control, or turbo to cross your displays.
+                      Saved Normal curve. Refinement transitions and active
+                      profile overrides are not simulated here.
                     </p>
-                  </div>
-                </>
+                  </TerminalPanel>
+                  <TerminalPanel title="Movement readout" span={4}>
+                    <MetricReadout
+                      label="Current mode"
+                      value={status?.mode ?? "Unknown"}
+                    />
+                    <MetricReadout
+                      label="Worker Normal limit"
+                      value={status?.normal_max_speed ?? "Unavailable"}
+                      unit="px/s"
+                    />
+                    <p>
+                      Saved Normal: {saved?.normal.min_speed}–
+                      {saved?.normal.max_speed} px/s - {saved?.normal.ramp_ms}{" "}
+                      ms ramp.
+                    </p>
+                    <p>
+                      Instantaneous cursor speed is not measured by this
+                      dashboard.
+                    </p>
+                  </TerminalPanel>
+                  <TerminalPanel title="Recent events" span={7}>
+                    <RecentEvents events={events} />
+                  </TerminalPanel>
+                  <TerminalPanel title="Engine health" span={5}>
+                    <dl className="diagnostics">
+                      <dt>Worker</dt>
+                      <dd>{status?.running ? "Running" : "Stopped"}</dd>
+                      <dt>Movement ticks</dt>
+                      <dd>{status?.ticks ?? "Unavailable"}</dd>
+                      <dt>Stale cancellations</dt>
+                      <dd>{status?.stalls ?? "Unavailable"}</dd>
+                      <dt>First pixel dispatch p95</dt>
+                      <dd>
+                        {status?.dispatch_p95_ms?.toFixed(2) ?? "No samples"} ms
+                      </dd>
+                    </dl>
+                  </TerminalPanel>
+                </div>
+              )}
+              {page === "Theme Studio" && <ThemeStudio />}
+              {page === "About" && (
+                <div className="terminal-grid">
+                  <TerminalPanel title="KEYMOUSE_" span={8}>
+                    <h3>Cursor control from your keyboard</h3>
+                    <p>
+                      KeyMouse {version} - Windows desktop utility. Local
+                      settings, dedicated function keys, and precision cursor
+                      tools.
+                    </p>
+                    <p>
+                      Normal, Precision and Turbo movement; Power, Linear and
+                      Smoothstep strategies; Tap versus Hold; Adaptive Braking;
+                      Per-Axis Acceleration; grid navigation; calibration;
+                      application profiles; magnifier; history and bookmarks.
+                    </p>
+                  </TerminalPanel>
+                  <TerminalPanel title="Technical information" span={4}>
+                    <p>Tauri 2 / React / TypeScript / Rust</p>
+                    <p>
+                      Windows Raw Input and native cursor APIs. Theme effects
+                      live exclusively in the frontend.
+                    </p>
+                    <p>
+                      No accounts or telemetry. The installer can download
+                      WebView2 if required.
+                    </p>
+                  </TerminalPanel>
+                  <TerminalPanel title="Documentation">
+                    <p>
+                      The built-in guide explains each movement feature and
+                      combinations for accurate cursor control.
+                    </p>
+                    <button onClick={() => setPage("Precision guide")}>
+                      Open Precision Guide
+                    </button>
+                    <button onClick={() => setPage("Diagnostics")}>
+                      Open Diagnostics
+                    </button>
+                  </TerminalPanel>
+                </div>
               )}
               {page === "Refinements" && (
                 <Refinements config={draft} setConfig={setDraft} />
@@ -512,8 +597,8 @@ export default function App() {
                 <Guide config={draft} onNavigate={setPage} />
               )}
               {page === "Movement" && (
-                <>
-                  <div className="tabs">
+                <div className="terminal-grid movement-workspace">
+                  <div className="tabs col-12">
                     {(["normal", "precision", "turbo"] as const).map((m) => (
                       <button
                         key={m}
@@ -524,7 +609,7 @@ export default function App() {
                       </button>
                     ))}
                   </div>
-                  <section className="card">
+                  <section className="card col-8">
                     <div className="section-head">
                       <div>
                         <h2>
@@ -546,7 +631,20 @@ export default function App() {
                             : "Priority 2"}
                       </span>
                     </div>
-                    <CurveGraph curve={draft[mode]} />
+                    <CurveGraph
+                      curve={draft[mode]}
+                      strategy={
+                        draft.features.acceleration.enabled
+                          ? draft.features.acceleration.strategy
+                          : "power"
+                      }
+                    />
+                  </section>
+                  <TerminalPanel title="Active profile" span={4}>
+                    <ProfileReadout data={presentation} status={status} />
+                  </TerminalPanel>
+                  <section className="card col-8">
+                    <h2>Speed and response settings</h2>
                     <div className="field-grid">
                       {(
                         [
@@ -618,7 +716,37 @@ export default function App() {
                       )}
                     </div>
                   </section>
-                  <div className="tip">
+                  <TerminalPanel title="Feature toggles" span={4}>
+                    {(["tap", "acceleration", "braking", "axes"] as const).map(
+                      (key) => (
+                        <Toggle
+                          key={key}
+                          label={
+                            {
+                              tap: "Tap versus Hold",
+                              acceleration: "Acceleration strategy",
+                              braking: "Adaptive Braking",
+                              axes: "Per-Axis Acceleration",
+                            }[key]
+                          }
+                          checked={draft.features[key].enabled}
+                          onChange={(enabled) =>
+                            setDraft({
+                              ...draft,
+                              features: {
+                                ...draft.features,
+                                [key]: { ...draft.features[key], enabled },
+                              },
+                            })
+                          }
+                        />
+                      ),
+                    )}
+                    <button onClick={() => setPage("Refinements")}>
+                      Fine-tune refinements
+                    </button>
+                  </TerminalPanel>
+                  <div className="tip col-12">
                     <MousePointer2 size={20} />
                     <p>
                       Precision takes priority over turbo. Diagonal continuous
@@ -626,10 +754,14 @@ export default function App() {
                       Activating precision while moving does not add a tap.
                     </p>
                   </div>
-                </>
+                </div>
               )}
               {page === "Keybindings" && (
-                <>
+                <KeymapWorkspace
+                  config={draft}
+                  setConfig={setDraft}
+                  status={status}
+                >
                   <section className="card">
                     <div className="section-head">
                       <div>
@@ -662,7 +794,7 @@ export default function App() {
                       another application can still receive F13–F24.
                     </p>
                   </div>
-                </>
+                </KeymapWorkspace>
               )}
               {page === "Mouse & scrolling" && (
                 <>
@@ -835,57 +967,18 @@ export default function App() {
                 </>
               )}
               {page === "Diagnostics" && (
-                <section className="card">
-                  <h2>Native engine</h2>
-                  <p>
-                    Aggregate timing and recognized controls only. No typed text
-                    or keyboard history.
-                  </p>
-                  <dl className="diagnostics">
-                    <dt>Worker</dt>
-                    <dd>
-                      {status?.running
-                        ? "Running · keymouse-input-engine"
-                        : "Stopped"}
-                    </dd>
-                    <dt>Configuration</dt>
-                    <dd>
-                      {errors.length
-                        ? "Draft has validation errors"
-                        : "Saved configuration validated by Rust"}
-                    </dd>
-                    <dt>Keyboard devices</dt>
-                    <dd>{status?.devices ?? "Unknown"}</dd>
-                    <dt>Last recognized action</dt>
-                    <dd>{status?.last_action ?? "None yet"}</dd>
-                    <dt>Movement ticks</dt>
-                    <dd>{status?.ticks ?? 0}</dd>
-                    <dt>Stale-tick cancellations</dt>
-                    <dd>{status?.stalls ?? 0}</dd>
-                    <dt>Maximum scheduled tick interval</dt>
-                    <dd>{status?.max_tick_ms.toFixed(2) ?? "0"} ms</dd>
-                    <dt>Effective Normal speed limit</dt>
-                    <dd>
-                      {status?.normal_max_speed ?? draft.normal.max_speed} px/s
-                    </dd>
-                    <dt>First pixel dispatch p95</dt>
-                    <dd>
-                      {status?.dispatch_p95_ms == null
-                        ? "No samples"
-                        : `${status.dispatch_p95_ms.toFixed(2)} ms (${status.dispatch_samples} samples)`}
-                    </dd>
-                  </dl>
-                  <p className="fine">
-                    First pixel timing includes acceleration and
-                    fractional-pixel delay. It is not a hardware latency
-                    certification. See docs/VALIDATION.md for the input-to-API
-                    acceptance procedure.
-                  </p>
-                </section>
+                <DiagnosticsScreen
+                  config={draft}
+                  status={status}
+                  data={presentation}
+                  events={events}
+                  onReload={() => void load()}
+                  onDisable={() => void enable()}
+                />
               )}
               {page === "General" && (
-                <>
-                  <section className="card">
+                <div className="terminal-grid general-workspace">
+                  <section className="card col-7">
                     <h2>Everyday preferences</h2>
                     <Toggle
                       label="Start minimized"
@@ -903,25 +996,39 @@ export default function App() {
                         setDraft({ ...draft, start_at_login })
                       }
                     />
-                    <label className="binding">
-                      <span>Appearance</span>
-                      <select
-                        aria-label="Appearance"
-                        value={draft.theme}
-                        onChange={(e) =>
-                          setDraft({
-                            ...draft,
-                            theme: e.target.value as Config["theme"],
+                    <button onClick={() => setPage("Theme Studio")}>
+                      Open Theme Studio
+                    </button>
+                  </section>
+                  <TerminalPanel title="Utility actions" span={5}>
+                    <div className="button-stack">
+                      <button
+                        onClick={() =>
+                          void run(async () => {
+                            await invoke("open_mini");
                           })
                         }
                       >
-                        <option value="system">Follow system</option>
-                        <option value="dark">Dark</option>
-                        <option value="light">Light</option>
-                      </select>
-                    </label>
-                  </section>
-                  <section className="card">
+                        Open Mini Control Panel
+                      </button>
+                      <button onClick={() => setPage("Theme Studio")}>
+                        Customize appearance
+                      </button>
+                      <button onClick={() => setPage("Precision guide")}>
+                        Read Precision Guide
+                      </button>
+                    </div>
+                  </TerminalPanel>
+                  <TerminalPanel title="Configuration" span={7}>
+                    <p>
+                      Settings are saved locally and validated by Rust. Theme
+                      preferences have their own versioned store.
+                    </p>
+                    <button onClick={() => void load()}>
+                      Reload saved settings
+                    </button>
+                  </TerminalPanel>
+                  <section className="card col-5">
                     <h2>Safety and recovery</h2>
                     <p>
                       <kbd>Ctrl</kbd> + <kbd>Alt</kbd> + <kbd>Shift</kbd> +{" "}
@@ -947,19 +1054,7 @@ export default function App() {
                       Restore all defaults
                     </button>
                   </section>
-                  <section className="card about">
-                    <div className="brand-icon">
-                      <MousePointer2 />
-                    </div>
-                    <div>
-                      <h2>KeyMouse {version}</h2>
-                      <p>
-                        Local, private cursor control for Windows. No telemetry,
-                        accounts, or network services.
-                      </p>
-                    </div>
-                  </section>
-                </>
+                </div>
               )}
               {errors.length > 0 && (
                 <div className="alert" role="alert">
@@ -971,7 +1066,7 @@ export default function App() {
                   </div>
                 </div>
               )}
-              <footer>
+              <footer className="save-bar">
                 <span>
                   {dirty
                     ? "Apply your changes to the native engine."
@@ -1001,6 +1096,15 @@ export default function App() {
           )}
         </div>
       </main>
+      <div className="bottom-strip">
+        <span className="crt-text">
+          {status?.running ? "WORKER ONLINE" : "WORKER OFFLINE"}
+        </span>
+        <span>
+          {status?.enabled ? "CONTROLS ENABLED" : "CONTROLS DISABLED"} -{" "}
+          {status?.mode ?? "Unavailable"} - v{version}
+        </span>
+      </div>
     </div>
   );
 }

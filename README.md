@@ -4,6 +4,8 @@ KeyMouse is a Windows desktop utility that turns dedicated keyboard controls int
 
 The backend owns input and configuration. React is a settings interface; it never drives cursor movement. No telemetry, accounts, cloud storage, typed-text recording or global keyboard suppression is used.
 
+The Retro Terminal interface includes **Theme Studio** with four presets, custom themes, phosphor glow and adjustable CRT lettering. Themes synchronize with the tray-accessible **Mini Control Panel** and overlays. See [the interface and theme guide](docs/RETRO_TERMINAL.md) for customization, architecture and validation details.
+
 Open **Precision guide** in the settings sidebar for feature explanations, starting values, suggested combinations and a calibration routine. The same guide is available as [PRECISION_GUIDE.md](docs/PRECISION_GUIDE.md). Both versions share `src/guide.json`; regenerate the document after edits with `node scripts/export-guide.mjs`.
 
 ## Requirements

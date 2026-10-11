@@ -14,12 +14,14 @@ mod movement_baseline;
 #[cfg(test)]
 mod movement_regression;
 mod native;
+mod presentation;
 mod profiles;
 #[cfg(test)]
 mod refinement_tests;
 mod refinements;
 mod scroll;
 mod services;
+mod themes;
 pub(crate) fn diagnostic_dir() -> Option<std::path::PathBuf> {
     #[cfg(feature = "diagnostics")]
     if let Some(path) = std::env::var_os("KEYMOUSE_DIAGNOSTIC_DATA_DIR") {
@@ -281,6 +283,7 @@ fn show(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
+        let _ = tauri::Emitter::emit(&w, "ui-visible", true);
         let _ = w.set_focus();
     }
 }
@@ -311,6 +314,12 @@ pub fn run() {
     }
     let handler: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
         Box::new(tauri::generate_handler![
+            themes::theme_load,
+            themes::theme_save,
+            presentation::open_mini,
+            presentation::open_page,
+            presentation::presentation_snapshot,
+            presentation::presentation_visibility,
             get_snapshot,
             cursor_tools_snapshot,
             cursor_tool,
@@ -359,6 +368,9 @@ pub fn run() {
                     .build()?;
             }
             let store = Store::new(&diagnostic_dir().unwrap_or(app.path().app_config_dir()?))?;
+            app.manage(themes::Themes::new(
+                store.path.parent().ok_or("Missing preference directory")?,
+            ));
             let (mut config, mut warning) = store.load();
             match app.autolaunch().is_enabled() {
                 Ok(enabled) => config.start_at_login = enabled,
@@ -393,7 +405,9 @@ pub fn run() {
             let toggle = MenuItem::with_id(app, "toggle", "Enable / disable", true, None::<&str>)?;
             let grid = MenuItem::with_id(app, "grid", "Grid navigation", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit KeyMouse", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &toggle, &grid, &quit])?;
+            let mini = MenuItem::with_id(app, "mini", "Mini Control Panel", true, None::<&str>)?;
+            let studio = MenuItem::with_id(app, "studio", "Theme Studio", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &mini, &studio, &toggle, &grid, &quit])?;
             TrayIconBuilder::with_id("keymouse")
                 .icon(
                     app.default_window_icon()
@@ -408,6 +422,22 @@ pub fn run() {
                 })
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show(app),
+                    "mini" => {
+                        let handle = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = presentation::open_mini(handle.clone()).await {
+                                *handle
+                                    .state::<AppState>()
+                                    .warning
+                                    .lock()
+                                    .unwrap_or_else(|p| p.into_inner()) = Some(e);
+                                show(&handle);
+                            }
+                        });
+                    }
+                    "studio" => {
+                        let _ = presentation::open_page(app.clone(), "Theme Studio".into());
+                    }
                     "quit" => {
                         let app = app.clone();
                         std::thread::spawn(move || {
@@ -472,7 +502,8 @@ pub fn run() {
         .on_window_event(|w, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
-                if w.label() == "main" {
+                if w.label() == "main" || w.label() == "mini" {
+                    let _ = tauri::Emitter::emit(w, "ui-visible", false);
                     let _ = w.hide();
                 } else if w.label() == "grid" {
                     grid::cancel_from_native(w.app_handle());
@@ -489,6 +520,10 @@ pub fn run() {
                     && !w.is_focused().unwrap_or(false) =>
             {
                 grid::cancel_from_native(w.app_handle())
+            }
+            tauri::WindowEvent::Resized(_) => {
+                let visible = w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false);
+                let _ = tauri::Emitter::emit(w, "ui-visible", visible);
             }
             _ => {}
         })
